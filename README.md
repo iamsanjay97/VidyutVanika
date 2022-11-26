@@ -1,2 +1,2 @@
 # VidyutVanika
-The autonomous broker for Power Trading Agent Competition (PowerTAC).
+The autonomous broker for Power Trading Agent Competition (PowerTAC). The autonomous broker for Power Trading Agent Competition (PowerTAC). VidyutVanika contains (i) a wholesale market module that handles bidding in day ahead energy auctions, (ii) a tariff market module that generates attractive and profitable tariff contracts, and (iii) a message manager module that collects all the data coming from server and stores it in appropriate repositories.
