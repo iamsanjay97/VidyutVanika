@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:p="http://www.springframework.org/schema/p"
+	xmlns:context="http://www.springframework.org/schema/context"
+	xmlns:jms="http://www.springframework.org/schema/jms" xmlns:amq="http://activemq.apache.org/schema/core"
+	xmlns:util="http://www.springframework.org/schema/util"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+	                    http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context.xsd
+	                    http://www.springframework.org/schema/jms http://www.springframework.org/schema/jms/spring-jms.xsd
+	                    http://activemq.apache.org/schema/core http://activemq.apache.org/schema/core/activemq-core-5.3.0.xsd
+	                    http://www.springframework.org/schema/util
+						http://www.springframework.org/schema/util/spring-util-2.5.xsd">
+
+  <context:annotation-config />
+  <context:component-scan base-package="org.powertac" />
+
+  <!-- A connection to ActiveMQ -->
+  <bean id="amqConnectionFactory" class="org.apache.activemq.ActiveMQConnectionFactory"
+        p:brokerURL="tcp://localhost:61616" p:useAsyncSend="true" />
+
+  <!-- A cached connection to wrap the ActiveMQ connection -->
+  <bean id="jmsFactory"
+        class="org.springframework.jms.connection.CachingConnectionFactory"
+        p:targetConnectionFactory-ref="amqConnectionFactory"
+        p:sessionCacheSize="10" />
+
+  <!-- A JmsTemplate instance that uses the cached connection and destination -->
+  <bean id="jmsTemplate" class="org.springframework.jms.core.JmsTemplate"
+    p:connectionFactory-ref="jmsFactory" />
+  
+  <bean id="taskExecutor" class="org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor" p:corePoolSize="5" p:maxPoolSize="25"/>
+  
+  <!-- need explicit list of beans that have properties to set -->
+
+
+  <util:map id="weatherInfoPerTimeSlot" map-class="java.util.concurrent.ConcurrentHashMap" 
+          key-type="java.lang.Integer" value-type="org.powertac.samplebroker.wholesaleMarket.WeatherDataPerTimeslot">
+  </util:map>
+    
+  <util:map id="priceHistory" map-class="java.util.HashMap" 
+          key-type="java.lang.Integer" value-type="org.powertac.samplebroker.wholesaleMarket.MarketClearingPrice">
+  </util:map>
+  
+  <util:map id="balancingPriceHistory" map-class="java.util.HashMap" 
+          key-type="java.lang.Integer" value-type="org.powertac.samplebroker.wholesaleMarket.BalancingPrice">
+  </util:map>
+  
+  <util:map id="pricePrediction" map-class="java.util.HashMap" 
+          key-type="java.lang.Integer" value-type="org.powertac.samplebroker.wholesaleMarket.PredictedClearingPrice">
+  </util:map>
+
+  <util:map id="pricePredictionV0" map-class="java.util.HashMap" 
+          key-type="java.lang.Integer" value-type="org.powertac.samplebroker.wholesaleMarket.PredictedClearingPrice">
+  </util:map>
+ 
+</beans>
