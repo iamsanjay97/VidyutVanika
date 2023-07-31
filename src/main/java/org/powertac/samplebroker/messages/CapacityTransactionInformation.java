@@ -25,13 +25,11 @@ public class CapacityTransactionInformation
 
     private Map<Integer, List<CapacityTransactionMessage>> capacityTransaction;
     private Map<Integer, Double> exceededThresholdMap;
-    private Map<Integer, Double> capacityTransactionPrediction;
 
     public CapacityTransactionInformation()
     {
         capacityTransaction = new HashMap<>();
         exceededThresholdMap = new HashMap<>();
-        capacityTransactionPrediction = new HashMap<>();
     }
 
     public void setCapacityTransaction(Integer timeslot, Integer peakTimeslot, Double threshold, Double exceededKWh, Double charge)
@@ -98,24 +96,6 @@ public class CapacityTransactionInformation
 
         return map;
     }
-
-    public void setCapacityTransactionPrediction(Integer timeslot, Double weight)
-    {
-        if(capacityTransactionPrediction.get(timeslot) == null)
-            capacityTransactionPrediction.put(timeslot, 0.0);
-
-        Double count = capacityTransactionPrediction.get(timeslot);
-        capacityTransactionPrediction.put(timeslot, count+weight);
-    }
-
-    public Double getCapacityTransactionPrediction(Integer timeslot)
-    {
-        if(capacityTransactionPrediction.get(timeslot) != null)
-            return capacityTransactionPrediction.get(timeslot);
-        else
-            return 0.0;
-    }
-
 
     /**
      * @to String method

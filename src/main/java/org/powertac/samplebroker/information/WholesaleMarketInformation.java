@@ -6,6 +6,7 @@ import javafx.util.Pair;
 
 public class WholesaleMarketInformation
 {
+  private Double PROFIT_MULTIPLIER = 1.5;
   private Map<Integer, Pair<Double, Double>> avgMCPMap;
   private Map<Integer, Double> totalClearedQuantityMap;
   private Double totalValue = 0.0;
@@ -55,15 +56,15 @@ public class WholesaleMarketInformation
 
   public void setMeanMarketPrice(Double MCP, Double quantity)
   {
-    totalUsage += quantity;
-    totalValue += MCP * quantity;
+    totalUsage += Math.abs(quantity);
+    totalValue += MCP * Math.abs(quantity);
   }
 
   public Double getMeanMarketPrice()
   {
     if(totalUsage != 0.0)
-      return Math.abs(totalValue/totalUsage);
+      return Math.abs(totalValue/totalUsage)*PROFIT_MULTIPLIER / 1000.0;
     else
-      return defaultMCP;
+      return defaultMCP*PROFIT_MULTIPLIER / 1000.0;
   }
 }

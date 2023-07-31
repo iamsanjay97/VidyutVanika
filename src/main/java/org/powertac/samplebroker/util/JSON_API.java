@@ -2,6 +2,7 @@ package org.powertac.samplebroker.util;
 
 import java.util.Map;
 import java.util.List;
+import javafx.util.Pair;
 import java.util.HashMap;
 import java.util.Arrays;
 import java.util.ArrayList;
@@ -91,19 +92,25 @@ public class JSON_API
 	}
 
 	// MCP, Net Imbalance and Customer Migration Predictions
-	public static ArrayList<Double> decodeJSON(String responseString)
+	public static Pair<Double, Double> decodeJSON(String responseString)
  	{
 	 	JSONParser parser = new JSONParser();
 		JSONArray json = null;
 
-		ArrayList<Double> predictions = new ArrayList<>();
+		Pair<Double, Double> predictions = null;
 
 		try
 		{
-			 json = (JSONArray) parser.parse(responseString);
+			json = (JSONArray) parser.parse(responseString);
+			predictions = new Pair<Double, Double> (Double.valueOf(json.get(0).toString()), Double.valueOf(json.get(1).toString()));
 
-			 for(Object a : json)
-					predictions.add(Double.valueOf(a.toString()));
+			// for(Object a: json)
+			// {
+			// 	String lps = String.valueOf(a);
+			// 	JSONArray temp = (JSONArray) parser.parse(lps);
+
+			// 	predictions.add(new Pair<Double, Double> (Double.valueOf(temp.get(0).toString()), Double.valueOf(temp.get(1).toString()))); 
+			// }
 		}
 		catch(Exception e){}
 

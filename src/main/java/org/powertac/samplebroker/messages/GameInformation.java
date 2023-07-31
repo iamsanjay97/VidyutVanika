@@ -159,7 +159,10 @@ public class GameInformation {
         this.populationMap = new HashMap<>();
         this.powerTypeMap = new HashMap<>();
 
-        ArrayList ptList = null, populationList =null, classList =  null, multiList = null;
+        ArrayList<String> ptList = null;
+        ArrayList<String> populationList = null;
+        ArrayList<String> classList =  null;
+        ArrayList<String> multiList = null;
 
         for (int i=0; i < customerCount; i++){
             String custName = this.customers.get(i).getName();
@@ -175,7 +178,7 @@ public class GameInformation {
 
             ptList = this.customerPowerTypeMap.get(pt);
             if (ptList == null)
-                ptList = new ArrayList();
+                ptList = new ArrayList<>();
              else
                  ptList.add(custName);
             this.customerPowerTypeMap.put(pt,ptList);
@@ -183,21 +186,21 @@ public class GameInformation {
 
             populationList = this.customerPopulationMap.get(population);
             if (populationList == null)
-                populationList = new ArrayList();
+                populationList = new ArrayList<>();
             else
                 populationList.add(custName);
             this.customerPopulationMap.put(population, populationList);
 
             classList = this.customerClassMap.get(custClass);
             if (classList == null)
-                classList = new ArrayList();
+                classList = new ArrayList<>();
             else
                 classList.add(custName);
             this.customerClassMap.put(custClass, classList);
 
             multiList = this.customerMultiContractingMap.get(multContract);
             if (multiList == null)
-                multiList = new ArrayList();
+                multiList = new ArrayList<>();
             else
                 multiList.add(custName);
             this.customerMultiContractingMap.put(multContract, multiList);

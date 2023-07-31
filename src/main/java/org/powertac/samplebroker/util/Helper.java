@@ -5,11 +5,10 @@ import java.util.*;
 import org.powertac.common.Rate;
 import org.powertac.common.TariffSpecification;
 import org.powertac.common.enumerations.PowerType;
-import org.powertac.samplebroker.interfaces.BrokerContext;
 import org.powertac.common.Tariff;
 
-public class Helper {
-
+public class Helper 
+{
     public static List<String> getListOfTargetedConsumers()
     {
       String[] customers = new String[] {"DowntownOffices", "EastsideOffices", "Village 2 NS Controllable", "Village 1 NS Controllable", "CentervilleHomes", "sf2",
@@ -38,112 +37,105 @@ public class Helper {
       return Arrays.asList(customers);
     }
 
-    public static TariffSpecification generateBlockTOUTariff(BrokerContext brokerContext, PowerType pt, Double basePrice, int[] timeBlocks, double mini, double maxi) {
-        TariffSpecification newTariff = new TariffSpecification(brokerContext.getBroker(), pt);
-        int numBlocks = timeBlocks.length;
-        Random rand = new Random();
-
-        for (int i = 0; i < numBlocks; i+=2) {
-            double r = rand.nextDouble();
-            r = mini + (maxi - mini) * r;
-            r = r * basePrice;
-            Rate rate = new Rate().withValue(r).withDailyBegin(timeBlocks[i]).withDailyEnd(timeBlocks[i+1]);
-            //System.out.println("index i "+ i+ " time blocks " + timeBlocks[i] + " " + timeBlocks[i+1] + " rate " + rate.toString());
-            newTariff.addRate(rate);
-        }
-
-        //System.out.println(" tariff publication from helper " + newTariff.getRates());
-
-        return newTariff;
-    }
-
     public static int getBlockNumber(int hour, int[] timeBlocks){
 
-        int numBlocks = timeBlocks.length;
-        int block = -1;
-        for(int i=0; i<numBlocks; i+=2){
-            int h1 = timeBlocks[i];
-            int h2 = timeBlocks[i+1];
+      int numBlocks = timeBlocks.length;
+      int block = -1;
+      for(int i=0; i<numBlocks; i+=2){
+          int h1 = timeBlocks[i];
+          int h2 = timeBlocks[i+1];
 
-            if((h1 <= hour) && (hour <= h2)){
-                block = i/2;
-            }
-         }
-        block = block + 1;
-        return block;
+          if((h1 <= hour) && (hour <= h2)){
+              block = i/2;
+          }
+       }
+      block = block + 1;
+      return block;
+  }
+
+    public double[] getHourlyTariff(TariffSpecification specification)
+    {
+      // Generate tariff series
+      List<Rate> rates = specification.getRates();
+  
+      double arr[] = new double[24];
+      int flag1 = 0;
+  
+      for(Rate rate : rates)
+      {
+        int begin = rate.getDailyBegin();
+        int end = rate.getDailyEnd() + 1;
+  
+        if(begin != -1)
+        {
+          flag1 = 1;
+          while(begin != end)
+          {
+            arr[begin] = Math.abs(rate.getMinValue());
+            begin = (begin + 1) % 24;
+          }
+        }
+      }
+  
+      if(flag1 == 0)
+        Arrays.fill(arr, Math.abs(rates.get(0).getMinValue()));
+  
+      return arr;
     }
 
-  public static Double evaluateCost(TariffSpecification spec)
-    // evaluates mean cost of tariff
+    public static double evaluateCost(TariffSpecification spec, boolean flag)  
     {
-        Tariff tf = new Tariff(spec);
-        List<Rate> rates = spec.getRates();
-        Double cost = 0D;
+      Tariff tf = new Tariff(spec);
+      List<Rate> rates = spec.getRates();
+      double cost = 0D;
 
-        if(tf.isTimeOfUse())
-        {
-            if(!tf.isWeekly())
-            {
-                // daily TOU Tariffs
-                for(Rate rate: rates)
-                {
-                    Double hours = (rate.getDailyEnd() - rate.getDailyBegin() + 1.0D) / 24.0D;
-                    if(rate.getDailyEnd() < rate.getDailyBegin())
-                        hours += 1.0D;
-                    cost += hours * rate.getValue();
-                }
-            }
-            else
-            {
-                // weekly TOU rates
-                for(Rate rate: rates)
-                {
-                    Double hours = (rate.getDailyEnd() - rate.getDailyBegin() + 1.0D);
-                    Double days = (double)(rate.getWeeklyEnd() - rate.getWeeklyBegin());
-                    if(rate.getDailyEnd() < rate.getDailyBegin())
-                    {
-                        if(days == 0)
-                            days = 7.0D;
-                        hours += (24.0D * days);
-                    }
-                    cost += hours * rate.getValue();
-                }
-                cost /= 168.0D;
-            }
+      if(rates == null)
+        return -1.0D; 
+
+      if(flag)
+      {
+        double sum = 0.0;
+        for(Rate r : rates)
+          sum += r.getMinValue(); 
+        int k = rates.size();
+        return sum / k;
+      }
+
+      if(tf.isTimeOfUse())
+      {
+        double denom = 0.0;
+        for(Rate rate: rates)
+        {   
+          double hours = (rate.getDailyEnd() - rate.getDailyBegin()) + 1.0D;
+          double days = (rate.getWeeklyEnd() - rate.getWeeklyBegin()) + 1.0D;
+          
+          if(rate.getDailyEnd() < rate.getDailyBegin())
+              hours += 24.0D;
+
+          if(rate.getWeeklyEnd() < rate.getWeeklyBegin())
+              days += 7.0D;
+          
+          denom += hours*days;
+          cost += hours * days * rate.getValue();
         }
-
-        else if(tf.isTiered())
-        {
-            // tiered tariffs
-            Double threshold = null, totalThresh = 0D;
-            for(Rate rate: rates)
-            {
-                if(threshold == null)
-                {
-                    totalThresh += 1.0;
-                    cost += rate.getValue();
-                }
-                else
-                {
-                    totalThresh += threshold;
-                    cost += (rate.getValue() * threshold);
-                }
-                threshold = rate.getTierThreshold();
-            }
-            cost /= totalThresh;
-        }
-
+        cost /= denom;
+      }
+      else
+      {
+        // absolutely fixed tariff / absolutely variable tariff
+        Rate fixedRate = rates.get(0);
+        if(!fixedRate.isFixed())
+            cost += fixedRate.getExpectedMean();
         else
+            cost += fixedRate.getValue();
+
+        if(spec.getPowerType().equals(PowerType.CONSUMPTION))      // TOU_Tariff is more preferred to FixedPrice_Tariff with same avgrate, trying to make both equal
         {
-            // absolutely fixed tariff or absolutely variable tariff
-            Rate fixedRate = rates.get(0);
-
-            if(!fixedRate.isFixed())
-                cost += fixedRate.getExpectedMean();
-            else
-                cost += fixedRate.getValue();
+          cost -= 0.02;
+          cost = Math.max(cost, -0.47);
         }
+      }
 
-        return cost;
+      return cost;
     }
 }

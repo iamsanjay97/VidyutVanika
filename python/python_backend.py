@@ -1,77 +1,112 @@
-from flask import Flask, render_template, request, url_for, jsonify
-import os,sys,csv,itertools,datetime, subprocess
-from flask.wrappers import Response
+from flask import Flask, request
 import pandas as pd
 import json
 import time
 import numpy as np
-from multiprocessing.pool import ThreadPool
-from joblib import Parallel, delayed
 
-import net_demand_prediction_deploy
+from gym_powertac.ddpg import DDPG
+from gym_powertac.powertac_wm import PowerTAC_WM
 
-from helper.read_mongo_collection import HelperToReadMongo
-from helper.customer_info import CustomerInfo
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 
-helper_to_read_mongo = HelperToReadMongo()
+config = tf.ConfigProto(
+    device_count={'GPU': 1},
+    intra_op_parallelism_threads=1,
+    allow_soft_placement=True
+)
+
+config.gpu_options.allow_growth = True
+config.gpu_options.per_process_gpu_memory_fraction = 0.6
+
+session = tf.Session(config=config)
+
+tf.keras.backend.set_session(session)
 
 app = Flask(__name__)
-pool = ThreadPool(processes=8)
 
-@app.route("/NDPredictionLSTM", methods=['POST'])
-def NDPredictionLSTM():
-    global predictions
+ddpg = DDPG(session)
+
+@app.route("/DDPGActionPicker", methods=['POST'])
+def DDPGActionPicker():
+    global resp
 
     if request.method == 'POST':
         try:
             data = request.get_json()
-            dataframe = pd.DataFrame()
+            states = list()
+
+            # print(data)
 
             for item in data:
                 if item is not None:
-                    dataframe = dataframe.append(item, ignore_index=True)
 
-            consumption_predictions = net_demand_prediction_deploy.deploy_consumption_model(loaded_models['CONSUMPTION'], dataframe)
-            production_predictions = net_demand_prediction_deploy.deploy_production_model(loaded_models['PRODUCTION'], dataframe)
+                    state = PowerTAC_WM(item['state']['proximity'], item['state']['balancingPrice'], item['state']['quantity'])
+                    states.append(state)
 
-            consumption_resp = json.dumps([prediction.item() for prediction in consumption_predictions])
-            production_resp = json.dumps([prediction.item() for prediction in production_predictions])
-
-            dict = {"consumption": consumption_resp, "production": production_resp}
-            response = json.dumps(dict)
-            print(response)
+            actions = ddpg.choose_Action(states)
+            resp = json.dumps([json.dumps(action) for action in actions[0]])
+            # print(resp)
 
         except Exception as e:
             print(e)
 
-    return response
+    return resp
 
 
-def test():
+@app.route("/DDPGUpdateReplayBuffer", methods=['POST'])
+def DDPGUpdateReplayBuffer():         
 
-    # for customer in list_of_customers:
-    #     try:
-    #         predictions = customer_usage_prediction_deploy.test(customer, loaded_customer_models[customer])
-    #     except Exception as e:
-    #         print(e)
+    if request.method == 'POST':
+        try:
+            data = request.get_json()
+            exeperiences = list()
 
-    try:
-        net_demand_prediction_deploy.test(loaded_models)
-    except Exception as e:
-        print(e)
+            # print(data)
+
+            for item in data:
+                if item is not None:
+
+                    state = PowerTAC_WM(item['state']['proximity'], item['state']['balancingPrice'], item['state']['quantity'])
+                    next_state = PowerTAC_WM(item['next_state']['proximity'], item['next_state']['balancingPrice'], item['next_state']['quantity'])
+
+                    exeperiences.append((state,item['action'],item['reward'],next_state,item['terminal']))
+
+            ddpg.add_to_reply_buffer(exeperiences)
+            # ddpg.train_ddpg_network()
+
+        except Exception as e:
+            print(e)
+
+    return "Done"
 
 
-if __name__== '__main__':
+@app.route("/DDPGTraining", methods=['POST'])
+def DDPGTraining():         
 
-    # list_of_customers = customer_info.get_all_customers()
+    if request.method == 'POST':
+        try:
+            ddpg.train_ddpg_network()
 
-    # print('Loading Customer Models ...')
-    # loaded_customer_models = customer_usage_prediction_deploy.load_customer_models()
+        except Exception as e:
+            print(e)
 
-    print('Loading NDP Models ...')
-    loaded_models = net_demand_prediction_deploy.load_models()
+    return "Done"
 
-    # First dummy prediction
-    test()
+
+@app.route("/SaveDDPGModels", methods=['POST'])
+def SaveDDPGModels():
+
+    if request.method == 'POST':
+        try:
+            ddpg.save_models()
+
+        except Exception as e:
+            print(e)
+
+    return "Done"
+
+
+if __name__== '__main__':   
 
     app.run(host='localhost', debug=True, use_reloader=False)

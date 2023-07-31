@@ -1,10 +1,8 @@
 package org.powertac.samplebroker.tariffmarket;
 
-import java.util.List;
 import java.util.Random;
-import java.util.ArrayList;
-
 import org.powertac.common.Rate;
+import org.powertac.common.RegulationRate;
 import org.powertac.common.TariffSpecification;
 import org.powertac.common.enumerations.PowerType;
 import org.powertac.samplebroker.interfaces.BrokerContext;
@@ -12,139 +10,196 @@ import org.powertac.samplebroker.interfaces.BrokerContext;
 public class TariffGenerator 
 {
     /**
-     * Create 10 tariffs in the pairs of 2s (keep the blocks same for all the 8 tariffs, only rates are variable). 
-     * In each pair, rates of non-peaks values are same, only peak blocks values are higher compare to first tariff in the pair. 
-     * Next set of pair has higher rates values for all the blocks and second tariff has the same rates as first for non-peak blocks
-     * and higher rates for peak blocks similar to the first pair. Do this for remaining two pairs too. 
+     * Desired structured of the tariff (mainly for C, IC, TSC tariffs)
+     *      Weekly tariff for each hour, identify peak and non-peak hours
+     *      rates for peak hours are delta_peak times than normal rates
+     *      rates for Mondays are delta_monday times than the normal rates
+     *      week-end rates are delta_weekend times than the normal rates
      * 
-     * Blocks: [5, 8, 13, 16, 21, 1, 5]
-     *           [NP,  P, NP, P ,NP, NP]
+     * Convert a FPT to weekly TOUT of desired structure
+     *      I/P: avg_rate ap 
+     *      O/P: weekly TOUT
+     *      Process: assume x is the normal rate value WHICH WE WANT TO FIND
+     *               we have identified p peak hours out of 24 hours of each day
+     *               multiply these peaks with delta_peak 
+     *               multiply rates of monday with delta_monday
+     *               multiply week-end rates with delta_weekend
+     *               then the rate-value x would be,
      * 
-     * If even the first tariff is not generating revenue or not attracting customers, then go to 
-     * fixed CROC TOU tariff (tariff of last resort). But this CROC tariff is not used; instead in 
-     * case of low revenue select highest revenue making tariff from above 10 tariffs.
+     *      4*((24-p)*x + p*delta_peak*x) + delta_monday*((24-p)*x + p*delta_peak*x) + 2*delta_weekend*((24-p)*x + p*delta_peak*x) / 168 = ap
+     *      where, except x all the values are pre-decided
+     *      add some randomness N(0, 0.001) in each rate-value
+     *      after calculating x, use x to structure per-hour weekly tariff in the way described above 
+     *      this would generate a weekly TOU tariff with avg rate-value close to input value ap.
      */
 
-    private Double MONDAY_MULTIPLIER;
+    private Double delta_peak;
+    private Double delta_monday;
+    private Double delta_weekend;
 
-    private List<Double[]> tariffRates;
-    private int numberOfTariffs = 11;
+    private Double discountIC;
+    private Double discountTSC;
+    private Double discountBS;
+
+    private Double[] blockStructure;
+    private Integer nPeaks;
+
+    // *********** Below are Configurable Parameters for Tariff Structure **************
+
+    private Double PERIODIC_PAYMENT_MULTIPLIER = 1.0;        // Use only if we are not making good profits in the finals  #IMPORTANT
+    private Double WITHDRAWAL_PENALTY_MULTIPLIER = 50.0;
+
+    private Double DELTA_PEAK = 1.5;
+    private Double DELTA_MONDAY = 1.2;
+    private Double DELTA_WEEKEND = 0.8;
+
+    private Double DISCOUNT_IC = 0.8;
+    private Double DISCOUNT_TSC = 0.8;
+    private Double DISCOUNT_BS = 0.8;
 
     public TariffGenerator()
     {
-        MONDAY_MULTIPLIER = 1.1;
-        tariffRates = new ArrayList<>();
+        delta_peak = DELTA_PEAK;
+        delta_monday = DELTA_MONDAY;
+        delta_weekend = DELTA_WEEKEND;
 
-        tariffRates.add(new Double[] {-0.1204, -0.1912, -0.1193, -0.2416, -0.1206, -0.1207, -0.118, -0.1784, -0.1174, -0.2286, -0.1181, -0.1181});
-        tariffRates.add(new Double[] {-0.1504, -0.1812, -0.1493, -0.1816, -0.1506, -0.1507, -0.148, -0.1784, -0.1474, -0.1786, -0.1481, -0.1481});
-        tariffRates.add(new Double[] {-0.1504, -0.2312, -0.1493, -0.2816, -0.1506, -0.1507, -0.148, -0.2184, -0.1474, -0.2686, -0.1481, -0.1481});
-        tariffRates.add(new Double[] {-0.2642, -0.2971, -0.2092, -0.2689, -0.227, -0.089, -0.2475, -0.2773, -0.1836, -0.2697, -0.2084, -0.089});
-        tariffRates.add(new Double[] {-0.2642, -0.3971, -0.2092, -0.4189, -0.227, -0.089, -0.2475, -0.3773, -0.1836, -0.4197, -0.2084, -0.089});
-        tariffRates.add(new Double[] {-0.2173, -0.2712, -0.2897, -0.4798, -0.3768, -0.1387, -0.1738, -0.217, -0.2318, -0.3838, -0.3015, -0.1109});
-        tariffRates.add(new Double[] {-0.2173, -0.3212, -0.2897, -0.5298, -0.4068, -0.1387, -0.1738, -0.267, -0.2318, -0.4338, -0.3315, -0.1109});
-        tariffRates.add(new Double[] {-0.27, -0.43, -0.25, -0.50, -0.39, -0.15, -0.23, -0.39, -0.21, -0.46, -0.35, -0.15});
-        tariffRates.add(new Double[] {-0.23, -0.53, -0.25, -0.65, -0.43, -0.10, -0.19, -0.49, -0.21, -0.60, -0.39, -0.10});
-        tariffRates.add(new Double[] {-0.33, -0.49, -0.29, -0.60, -0.45, -0.13, -0.30, -0.44, -0.26, -0.55, -0.41, -0.13});
-        tariffRates.add(new Double[] {-0.33, -0.65, -0.29, -0.75, -0.55, -0.13, -0.30, -0.60, -0.26, -0.70, -0.50, -0.13});
+        // discount (1-discountIC)*100 % given to IC customers
+        discountIC = DISCOUNT_IC;
+        // discount (1-discountTSC)*100 % given to TSC customers
+        discountTSC = DISCOUNT_TSC;
+        // discount (1-discountTSC)*100 % given to BS customers
+        discountBS = DISCOUNT_BS;
+
+        // hourly peak and non-peak structure (0 to 23) 
+        blockStructure = new Double[] {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, delta_peak, delta_peak, delta_peak, delta_peak, delta_peak, 
+                                       1.0, 1.0, 1.0, 1.0, delta_peak, delta_peak, delta_peak, delta_peak, delta_peak, delta_peak, 1.0};
+        nPeaks = countPeaks(blockStructure);
     }
 
-    public List<Double[]> getGeneratedRates()
+    public Integer countPeaks(Double[] blockStructure)
     {
-        return tariffRates;
+        Integer count = 0;
+        for(Double item: blockStructure)
+        {
+            if(item == delta_peak)
+                count++;
+        }
+        return count;
     }
 
-    public int getNumberOfTariffs()
+    public Double calculateNormalRate(Double ap)
     {
-        return numberOfTariffs;
+        Double x = 168*ap / ((4 + delta_monday + 2*delta_weekend) * (24 - nPeaks + nPeaks*delta_peak));
+        return x;
     }
 
-    public TariffSpecification generateBlockTOUTariff(BrokerContext brokerContext, Double[] rates) 
+    // Use the method to generate Weekly TOUT for CONSUMPTION, IC, TSC tariff-types
+    public TariffSpecification generateWeeklyTOUTariff(BrokerContext brokerContext, Double ap, PowerType powerType)
     {
-        PowerType pt = PowerType.CONSUMPTION;
-        TariffSpecification spec = new TariffSpecification(brokerContext.getBroker(), pt);
+        TariffSpecification spec = new TariffSpecification(brokerContext.getBroker(), powerType);
+        Double normalRate = calculateNormalRate(ap);
+        Random rand = new Random();
+        double stdev = 0.001;
+        Double typeMultiplier = 1.0;
+
+        if(powerType.equals(PowerType.INTERRUPTIBLE_CONSUMPTION))
+            typeMultiplier = discountIC;
+        else if(powerType.equals(PowerType.THERMAL_STORAGE_CONSUMPTION))
+            typeMultiplier = discountTSC;
+        else if(powerType.equals(PowerType.BATTERY_STORAGE))
+            typeMultiplier = discountBS;
+
+        for(int i = 1; i <= 7; i++)
+        {
+            Double multiplier = 1.0;
+            if(i == 1)
+                multiplier = delta_monday;
+            else if(i == 6 || i == 7)
+                multiplier = delta_weekend;
+
+            for(int j = 0; j < 24; j++)
+            {
+                Double rateValue = Math.round((normalRate*blockStructure[j]*multiplier*typeMultiplier + rand.nextGaussian()*stdev)*1e6)/1e6;
+                Rate rate = new Rate().withValue(rateValue).withDailyBegin(j).withDailyEnd(j).withWeeklyBegin(i).withWeeklyEnd(i);
+
+                if(powerType.isInterruptible())
+                    rate.withMaxCurtailment(0.5);
+
+                spec.addRate(rate);
+            }
+        }    
+        
+        if(powerType.equals(PowerType.THERMAL_STORAGE_CONSUMPTION) || powerType.equals(PowerType.BATTERY_STORAGE))
+        {
+            RegulationRate regulationRate = new RegulationRate().withUpRegulationPayment(-1.30*ap).withDownRegulationPayment(0.70*ap);
+            spec.addRate(regulationRate);
+            spec.withEarlyWithdrawPayment(50.0*ap).withMinDuration(82800000);
+        }
+        else   
+        {
+            spec.withPeriodicPayment(PERIODIC_PAYMENT_MULTIPLIER*ap);
+            spec.withEarlyWithdrawPayment(WITHDRAWAL_PENALTY_MULTIPLIER*ap).withMinDuration(82800000);   
+        }
+
+        return spec;
+    }
+
+    // Use the method to generate FPT for PRODUCTION and STORAGE tariff-types
+    public TariffSpecification generateFPTariff(BrokerContext brokerContext, Double ap, PowerType powerType, boolean flag)
+    {
+        TariffSpecification spec = new TariffSpecification(brokerContext.getBroker(), powerType);
 
         Random rand = new Random();
-        double stdev = 0.005;  // ideal to keep 0.005
+        double stdev = 0.001;
 
-        for(int i = 0; i < rates.length; i++)                   
-            rates[i] += (Math.round(rand.nextGaussian()*stdev*1e6)/1e6);
-        
-        Rate r0 = new Rate().withValue(MONDAY_MULTIPLIER*rates[0]).withDailyBegin(5).withDailyEnd(8).withWeeklyBegin(1).withWeeklyEnd(1);
-        Rate r1 = new Rate().withValue(MONDAY_MULTIPLIER*rates[1]).withDailyBegin(8).withDailyEnd(13).withWeeklyBegin(1).withWeeklyEnd(1);
-        Rate r2 = new Rate().withValue(MONDAY_MULTIPLIER*rates[2]).withDailyBegin(13).withDailyEnd(16).withWeeklyBegin(1).withWeeklyEnd(1);
-        Rate r3 = new Rate().withValue(MONDAY_MULTIPLIER*rates[3]).withDailyBegin(16).withDailyEnd(21).withWeeklyBegin(1).withWeeklyEnd(1);
-        Rate r4 = new Rate().withValue(MONDAY_MULTIPLIER*rates[4]).withDailyBegin(21).withDailyEnd(1).withWeeklyBegin(1).withWeeklyEnd(1);
-        Rate r5 = new Rate().withValue(MONDAY_MULTIPLIER*rates[5]).withDailyBegin(1).withDailyEnd(5).withWeeklyBegin(1).withWeeklyEnd(1);
-        Rate r6 = new Rate().withValue(rates[0]).withDailyBegin(5).withDailyEnd(8).withWeeklyBegin(2).withWeeklyEnd(5);
-        Rate r7 = new Rate().withValue(rates[1]).withDailyBegin(8).withDailyEnd(13).withWeeklyBegin(2).withWeeklyEnd(5);
-        Rate r8 = new Rate().withValue(rates[2]).withDailyBegin(13).withDailyEnd(16).withWeeklyBegin(2).withWeeklyEnd(5);
-        Rate r9 = new Rate().withValue(rates[3]).withDailyBegin(16).withDailyEnd(21).withWeeklyBegin(2).withWeeklyEnd(5);
-        Rate r10 = new Rate().withValue(rates[4]).withDailyBegin(21).withDailyEnd(1).withWeeklyBegin(2).withWeeklyEnd(5);
-        Rate r11 = new Rate().withValue(rates[5]).withDailyBegin(1).withDailyEnd(5).withWeeklyBegin(2).withWeeklyEnd(5);
-        Rate r12 = new Rate().withValue(rates[6]).withDailyBegin(5).withDailyEnd(8).withWeeklyBegin(6).withWeeklyEnd(7);
-        Rate r13 = new Rate().withValue(rates[7]).withDailyBegin(8).withDailyEnd(13).withWeeklyBegin(6).withWeeklyEnd(7);
-        Rate r14 = new Rate().withValue(rates[8]).withDailyBegin(13).withDailyEnd(16).withWeeklyBegin(6).withWeeklyEnd(7);
-        Rate r15 = new Rate().withValue(rates[9]).withDailyBegin(16).withDailyEnd(21).withWeeklyBegin(6).withWeeklyEnd(7);
-        Rate r16 = new Rate().withValue(rates[10]).withDailyBegin(21).withDailyEnd(1).withWeeklyBegin(6).withWeeklyEnd(7);
-        Rate r17 = new Rate().withValue(rates[11]).withDailyBegin(1).withDailyEnd(5).withWeeklyBegin(6).withWeeklyEnd(7);
-        
-        spec.addRate(r0);
-        spec.addRate(r1);
-        spec.addRate(r2);
-        spec.addRate(r3);
-        spec.addRate(r4);
-        spec.addRate(r5);
-        spec.addRate(r6);
-        spec.addRate(r7);
-        spec.addRate(r8);
-        spec.addRate(r9);
-        spec.addRate(r10);
-        spec.addRate(r11);
-        spec.addRate(r12);
-        spec.addRate(r13);
-        spec.addRate(r14);
-        spec.addRate(r15);
-        spec.addRate(r16);
-        spec.addRate(r17);
+        if(powerType.equals(PowerType.BATTERY_STORAGE))
+        {
+            Double rateValue = ap*discountBS + Math.round(rand.nextGaussian()*stdev*1e6)/1e6;
+            spec.withMinDuration(302400000).withSignupPayment(10.1).withEarlyWithdrawPayment(-19);
+            Rate rate = new Rate().withValue(rateValue);
+            RegulationRate regulationRate = new RegulationRate().withUpRegulationPayment(-1.30*ap).withDownRegulationPayment(0.70*ap);
+            spec.addRate(rate);
+            spec.addRate(regulationRate);
+        }
+        else
+        {
+            if(flag)
+            {
+                for(int j = 0; j < 24; j++)
+                {
+                    Double rateValue = Math.round((ap + rand.nextGaussian()*stdev)*1e6)/1e6;
+                    Rate rate = new Rate().withValue(rateValue).withDailyBegin(j).withDailyEnd(j);
+                    spec.addRate(rate);
+                }
+            }
+            else
+            {
+                Double rateValue = ap + Math.round(rand.nextGaussian()*stdev*1e6)/1e6;
+                Rate rate = new Rate().withValue(rateValue);
+                spec.addRate(rate);
+            }
+        }
 
         return spec;
     }
 
-    public TariffSpecification generateTariffOfLastResort(BrokerContext brokerContext) 
+    public Double increseTariffAvgRate(Double ap)
     {
-        PowerType pt = PowerType.CONSUMPTION;
-        TariffSpecification spec = new TariffSpecification(brokerContext.getBroker(), pt);
+        Random rand = new Random();
+        double mean = 0.02;
+        double stdev = 0.0033;
 
-        Rate r1 = new Rate().withValue(-0.11).withDailyBegin(6).withDailyEnd(11).withWeeklyBegin(2).withWeeklyEnd(5);
-        Rate r2 = new Rate().withValue(-0.21).withDailyBegin(11).withDailyEnd(14).withWeeklyBegin(2).withWeeklyEnd(5);
-        Rate r3 = new Rate().withValue(-0.13).withDailyBegin(14).withDailyEnd(17).withWeeklyBegin(2).withWeeklyEnd(5);
-        Rate r4 = new Rate().withValue(-0.22).withDailyBegin(17).withDailyEnd(23).withWeeklyBegin(2).withWeeklyEnd(5);
-        Rate r5 = new Rate().withValue(-0.05).withDailyBegin(23).withDailyEnd(6).withWeeklyBegin(2).withWeeklyEnd(5);
-        
-        Rate r6 = new Rate().withValue(-0.09).withDailyBegin(6).withDailyEnd(11).withWeeklyBegin(1).withWeeklyEnd(1);
-        Rate r7 = new Rate().withValue(-0.20).withDailyBegin(11).withDailyEnd(14).withWeeklyBegin(1).withWeeklyEnd(1);
-        Rate r8 = new Rate().withValue(-0.11).withDailyBegin(14).withDailyEnd(17).withWeeklyBegin(1).withWeeklyEnd(1);
-        Rate r9 = new Rate().withValue(-0.20).withDailyBegin(17).withDailyEnd(23).withWeeklyBegin(1).withWeeklyEnd(1);
-        Rate r0 = new Rate().withValue(-0.05).withDailyBegin(23).withDailyEnd(6).withWeeklyBegin(1).withWeeklyEnd(1);
-        
-        Rate r10= new Rate().withValue(-0.10).withDailyBegin(6).withDailyEnd(16).withWeeklyBegin(6).withWeeklyEnd(7);
-        Rate r11= new Rate().withValue(-0.20).withDailyBegin(16).withDailyEnd(23).withWeeklyBegin(6).withWeeklyEnd(7);
-        Rate r12= new Rate().withValue(-0.05).withDailyBegin(23).withDailyEnd(6).withWeeklyBegin(6).withWeeklyEnd(7);
-    
-        spec.addRate(r0);
-        spec.addRate(r1);
-        spec.addRate(r2);
-        spec.addRate(r3);
-        spec.addRate(r4);
-        spec.addRate(r5);
-        spec.addRate(r6);
-        spec.addRate(r7);
-        spec.addRate(r8);
-        spec.addRate(r9);
-        spec.addRate(r10);
-        spec.addRate(r11);
-        spec.addRate(r12);
+        Double rateValue = Math.round((ap + rand.nextGaussian()*stdev + mean)*1e6)/1e6;
+        return rateValue;
+    }
 
-        return spec;
+    public Double decreseTariffAvgRate(Double ap)
+    {
+        Random rand = new Random();
+        double mean = -0.02;
+        double stdev = 0.0033;
+
+        Double rateValue = Math.round((ap + rand.nextGaussian()*stdev + mean)*1e6)/1e6;
+        return rateValue;
     }
 }

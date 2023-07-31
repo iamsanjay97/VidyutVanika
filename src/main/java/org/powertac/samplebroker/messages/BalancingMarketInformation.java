@@ -14,12 +14,14 @@ public class BalancingMarketInformation
     private Map<Integer, Pair <Double, Double>> balancingTransaction;
     private Map<Integer, Double> netImbalance;
     private Pair<Integer, Double> avgBalancingPrice;
+    private Pair<Integer, Double> avgBuyBalancingPrice;
 
     public BalancingMarketInformation()
     {
         balancingTransaction = new LinkedHashMap<>();
         netImbalance = new LinkedHashMap<>();
         avgBalancingPrice = new Pair<Integer, Double>(1, 0.0);
+        avgBuyBalancingPrice = new Pair<Integer, Double>(1, 0.0);
     }
 
     public void setBalancingTransaction(Integer timeslot, Double kwh, Double charge)
@@ -70,6 +72,20 @@ public class BalancingMarketInformation
     public Double getAvgBalancingPrice()
     {
       return avgBalancingPrice.getValue();
+    }
+
+    public void setAvgBuyBalancingPrice(Double charge)
+    {
+      Double avg = ((avgBuyBalancingPrice.getKey() * avgBuyBalancingPrice.getValue()) + Math.abs(charge)) / (avgBuyBalancingPrice.getKey() + 1);
+      avgBuyBalancingPrice = new Pair<Integer, Double>(avgBuyBalancingPrice.getKey() + 1, avg);
+    }
+
+    public Double getAvgBuyBalancingPrice()
+    {
+      if(avgBuyBalancingPrice.getValue() != null)
+        return avgBuyBalancingPrice.getValue();
+      else
+        return 50.0;
     }
 
     /**

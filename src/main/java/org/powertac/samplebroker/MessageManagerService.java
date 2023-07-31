@@ -16,59 +16,42 @@
 
 package org.powertac.samplebroker;
 
-import java.io.File;
-import java.io.FileWriter;
-import java.io.FileReader;
-import java.io.BufferedReader;
-import java.io.IOException;
-
 import java.util.Random;
 import java.util.List;
-import java.util.Arrays;
-import java.util.Random;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.Vector;
 import java.util.stream.Collectors;
-import java.util.SortedMap;
-import java.util.SortedSet;
-import java.util.ArrayList;
 import java.util.Collections;
-import javafx.util.Pair;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.joda.time.DateTime;
 import org.powertac.common.*;
-import org.powertac.common.enumerations.PowerType;
 import org.powertac.common.msg.*;
 import org.powertac.common.config.ConfigurableValue;
 import org.powertac.common.repo.TimeslotRepo;
 import org.powertac.samplebroker.core.BrokerPropertiesService;
 import org.powertac.samplebroker.information.CustomerUsageInformation;
 import org.powertac.samplebroker.information.UsageRecord;
-import org.powertac.samplebroker.information.CustomerSubscriptionInformation;
 import org.powertac.samplebroker.information.WholesaleMarketInformation;
 import org.powertac.samplebroker.messages.*;
 import org.powertac.samplebroker.messages.CapacityTransactionInformation.CapacityTransactionMessage;
+import org.powertac.samplebroker.util.Helper;
 import org.powertac.samplebroker.interfaces.BrokerContext;
 import org.powertac.samplebroker.interfaces.Activatable;
 import org.powertac.samplebroker.interfaces.MessageManager;
 import org.powertac.samplebroker.interfaces.Initializable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.powertac.samplebroker.util.Helper;
 
-import com.mongodb.*;
-import com.mongodb.BasicDBObject;
-import com.mongodb.DB;
-import com.mongodb.DBObject;
-import com.mongodb.DBCollection;
 import com.mongodb.client.MongoDatabase;
+
+import javafx.util.Pair;
+
 import com.mongodb.MongoClient;
-import com.mongodb.MongoCredential;
 import com.mongodb.client.MongoCollection;
-import org.bson.Document; 
+import org.bson.Document;
+import org.joda.time.DateTime; 
 
 
 @Service // Spring creates a single instance at startup
@@ -140,7 +123,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
     MongoClient mongoClient;
 
     //MongoDB database
-    DB mongoDatabase;
+    MongoDatabase mongoDatabase;
 
     String dbname; 
 
@@ -187,7 +170,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
         wholesaleMarketInformation = new WholesaleMarketInformation();
         orderBookInformation = new OrderBookInformation();
         custUsageInfo = new CustomerUsageInformation(alpha,brokerContext.getUsageRecordLength());
-        dbname = "PowerTAC2021_Trials2";
+        dbname = "PowerTAC2022_DDPG_Testing";
 
         netDemand = new HashMap<>();
         netDemandRecord = new NetDemandRecord();
@@ -200,7 +183,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
         try
         {
             mongoClient = new MongoClient("localhost", 27017);
-            mongoDatabase = mongoClient.getDB(dbname);
+            mongoDatabase = mongoClient.getDatabase(dbname);
         }
         catch(Exception e)
         {
@@ -272,26 +255,21 @@ public class MessageManagerService implements MessageManager, Initializable, Act
        Integer population = gameInformation.getPopulation(customerName);
 
        for (int i = 0; i < dataLength; i++) {
-          index = i % uLength;
-          usage = Math.abs(cbd.getNetUsage()[i]) / population;
-          bootUsage.add(Double.valueOf(usage));
-          temp += usage;
-          custUsageInfo.setCustomerUsageProjectionMap(customerName, index, usage);
-          custUsageInfo.setCustomerUsageMap(customerName, i+OFFSET, usage);
+           index = i % uLength;
+           usage = Math.abs(cbd.getNetUsage()[i]) / population;
+           bootUsage.add(Double.valueOf(usage));
+           temp += usage;
+           custUsageInfo.setCustomerUsageProjectionMap(customerName, index, usage);
+           custUsageInfo.setCustomerUsageMap(customerName, i+OFFSET, usage);
 
-          if(cbd.getPowerType().isConsumption())
-            distributionInformation.setTotalConsumption(i+OFFSET, Math.abs(cbd.getNetUsage()[i]));
-          else if(cbd.getPowerType().isProduction())
-            distributionInformation.setTotalProduction(i+OFFSET, Math.abs(cbd.getNetUsage()[i]));
+           Double demand = netDemand.get(i);
 
-          Double demand = netDemand.get(i);
-
-          if(demand != null)
-          {
+           if(demand != null)
+           {
             demand -= cbd.getNetUsage()[i];
             netDemand.put(i, demand);
-          }
-          else
+           }
+           else
             netDemand.put(i, -cbd.getNetUsage()[i]);
        }
 
@@ -317,6 +295,13 @@ public class MessageManagerService implements MessageManager, Initializable, Act
         Integer dataLength = mbd.getMwh().length;
         Double clearedQuantity = 0.0;
         Double clearingPrice = 0.0;
+
+        for (int i = 0; i < mbd.getMwh().length; i++) 
+        {
+          if (Math.abs(mbd.getMwh()[i]) > 0.0) {
+            wholesaleMarketInformation.setMeanMarketPrice(-Math.abs(mbd.getMarketPrice()[i]), Math.abs(mbd.getMwh()[i]));        
+          }
+        }
 
         for(int i=0; i < dataLength; i++)
         {
@@ -345,10 +330,10 @@ public class MessageManagerService implements MessageManager, Initializable, Act
         int timeslot = dr.getTimeslot();
         distributionInformation.setTotalConsumption(timeslot, dr.getTotalConsumption());
         distributionInformation.setTotalProduction(timeslot, dr.getTotalProduction());
-        //System.out.println("Total Consumption : " + dr.getTotalConsumption() + ", Total Production : " + dr.getTotalProduction());
+        // System.out.println("Total Consumption : " + dr.getTotalConsumption() + ", Total Production : " + dr.getTotalProduction());
 
         netDemand.put(timeslot, dr.getTotalConsumption() - dr.getTotalProduction());
-        netDemandRecord.localProduceConsumeNetDemand((dr.getTotalConsumption() - dr.getTotalProduction()), timeslot);  
+        netDemandRecord.localProduceConsumeNetDemand((dr.getTotalConsumption() - dr.getTotalProduction()), timeslot);
 
         List<Double> listOfNetDemands = getListOfNetDemands();
 
@@ -360,24 +345,6 @@ public class MessageManagerService implements MessageManager, Initializable, Act
 
         Double exceededThreshold = Math.max(0.0, (currentDemand - threshold));
         capacityTransactionInformation.setExceededThresholdMap(timeslot, exceededThreshold);
-
-        try
-        {
-          String col12 = "Capacity_Transaction_Net_Demand_Info";
-          DBCollection collection12 = mongoDatabase.getCollection(col12);
-
-          DBObject document12 = new BasicDBObject();
-
-          document12.put("Game_Name", gameInformation.getName());
-          document12.put("Timeslot", timeslot);
-          document12.put("Mean", mean);
-          document12.put("Stdev", stdev);
-          document12.put("Threshold", threshold);
-          document12.put("Demand", currentDemand);
-
-          collection12.insert(document12);
-        }
-        catch(Exception e){}
     }
 
     /**
@@ -385,11 +352,24 @@ public class MessageManagerService implements MessageManager, Initializable, Act
      */
     public synchronized void handleMessage (BalancingTransaction bt)
     {
-        //System.out.println("Broker's Imbalance : " + bt.getKWh() + " , Charge : " + bt.getCharge());
+        System.out.println("Broker's Imbalance : " + bt.getKWh() + " , Charge : " + bt.getCharge());
         balancingMarketInformation.setBalancingTransaction(bt.getPostedTimeslotIndex(), bt.getKWh(), bt.getCharge());
 
-        Double mWh = bt.getKWh() / 1000.0;
-        Double chargePerMWh = Math.abs(bt.getCharge() / mWh);
+        Double mWh = bt.getKWh() / 1e3;
+        Double chargePerMWh = bt.getCharge() / Math.abs(mWh);
+
+        balancingMarketInformation.setAvgBalancingPrice(chargePerMWh);
+
+        if(mWh < 0)
+        {
+          if(bt.getCharge() > 0)
+            return;
+          
+          balancingMarketInformation.setAvgBuyBalancingPrice(chargePerMWh);
+        }
+
+        if ((Math.abs(mWh) > 0.0) && (bt.getCharge() < 0.0)) 
+          wholesaleMarketInformation.setMeanMarketPrice(chargePerMWh, mWh);
     }
 
     /**
@@ -409,9 +389,13 @@ public class MessageManagerService implements MessageManager, Initializable, Act
      */
     public synchronized void handleMessage (CapacityTransaction ct)
     {
-        // System.out.println(ct.getPostedTimeslotIndex() + " : " + ct.getPeakTimeslot() + " : " + ct.getThreshold() + " : " + ct.getKWh() + " : " + ct.getCharge());
+        System.out.println(ct.getPostedTimeslotIndex() + " : " + ct.getPeakTimeslot() + " : " + ct.getThreshold() + " : " + ct.getKWh() + " : " + ct.getCharge());
         capacityTransactionInformation.setCapacityTransaction(ct.getPostedTimeslotIndex(), ct.getPeakTimeslot(), ct.getThreshold(),ct.getKWh(), ct.getCharge());
         log.info("Capacity tx: " + ct.getCharge());
+        double ctq = ct.getKWh() / 1000.0;
+        double ctp = ct.getCharge() / Math.abs(ctq);
+        if ((Math.abs(ctq) > 0.0) && (ct.getCharge() < 0.0)) 
+          wholesaleMarketInformation.setMeanMarketPrice(ctp, ctq);
     }
 
     /**
@@ -423,7 +407,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
         int timeslot = cp.getPostedTimeslotIndex();
         cashPositionInformation.setCashPosition(timeslot, cash);
         log.info("Cash position: " + cash);
-        // System.out.println("CashPosition : " + cash);
+        System.out.println("CashPosition : " + cash);
     }
 
     /**
@@ -444,7 +428,8 @@ public class MessageManagerService implements MessageManager, Initializable, Act
     {
         marketPositionInformation.setMarketPosition(mp.getTimeslotIndex(), mp.getOverallBalance());
         brokerContext.getBroker().addMarketPosition(mp, mp.getTimeslotIndex());
-        // System.out.println("Timeslot : " + mp.getTimeslotIndex() + ", MarketPosition : " + mp.getOverallBalance());
+        if((timeslotRepo.currentSerialNumber()+1 == mp.getTimeslotIndex()) || (timeslotRepo.currentSerialNumber() == mp.getTimeslotIndex()))
+          System.out.println("Timeslot : " + mp.getTimeslotIndex() + ", MarketPosition : " + mp.getOverallBalance());
     }
 
     /**
@@ -461,8 +446,9 @@ public class MessageManagerService implements MessageManager, Initializable, Act
         marketTransactionInformation.setMarketTransactionInformationbyExectionTimeslot(executionTimeslot, messageTimeslot, mt.getPrice(), mt.getMWh());
         marketTransactionInformation.setMarketTransactionInformationbyMessageTimeslot(messageTimeslot, executionTimeslot, mt.getPrice(), mt.getMWh());
         marketTransactionInformation.setBrokerWholesaleCostMap(executionTimeslot, mt.getPrice(), mt.getMWh());
+        wholesaleMarketInformation.setAvgMCP(executionTimeslot, Math.abs(mt.getPrice()), Math.abs(mt.getMWh()));
         wholesaleMarketInformation.setTotalClearedQuantity(executionTimeslot, mt.getMWh());
-        wholesaleMarketInformation.setMeanMarketPrice(mt.getPrice(), mt.getMWh());
+        // wholesaleMarketInformation.setMeanMarketPrice(mt.getPrice(), mt.getMWh());
     }
 
     /**
@@ -476,6 +462,8 @@ public class MessageManagerService implements MessageManager, Initializable, Act
         clearedTradeInformation.setClearedTradebyMessageTimeslot(messageTimeslot, executionTimeslot, ct.getExecutionPrice(), ct.getExecutionMWh());
         clearedTradeInformation.setClearedTradebyExecutionTimeslot(executionTimeslot, messageTimeslot, ct.getExecutionPrice(), ct.getExecutionMWh());
         wholesaleMarketInformation.setAvgMCP(executionTimeslot, ct.getExecutionPrice(), ct.getExecutionMWh());
+        if (Math.abs(ct.getExecutionMWh()) > 0.0)   // price should be negative
+          wholesaleMarketInformation.setMeanMarketPrice(-Math.abs(ct.getExecutionPrice()), Math.abs(ct.getExecutionMWh())); 
     }
 
     /**
@@ -511,9 +499,9 @@ public class MessageManagerService implements MessageManager, Initializable, Act
         if(currentTimeslot == 362)
         {
           String col0 = "Participant_Brokers_Info";
-          DBCollection collection0 = mongoDatabase.getCollection(col0);
+          MongoCollection<Document> collection0 = mongoDatabase.getCollection(col0);
 
-          DBObject document0 = new BasicDBObject();
+          Document document0 = new Document();
 
           document0.put("Game_Name", bootFile);
           document0.put("isAgentUDE17", brokers.contains("AgentUDE17") ? 1 : 0);
@@ -524,16 +512,16 @@ public class MessageManagerService implements MessageManager, Initializable, Act
           document0.put("isTacTex", brokers.contains("TacTex") ? 1 : 0);
           document0.put("isVidyutVanika", brokers.contains("VidyutVanika") ? 1 : 0);
 
-          collection0.insert(document0);
+          collection0.insertOne(document0);
         }
       }
       catch(Exception e){} */
       ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-      try
+      /* try
       {
         String col1 = "Calendar_Info";
-        DBCollection collection1 = mongoDatabase.getCollection(col1);
+        MongoCollection<Document> collection1 = mongoDatabase.getCollection(col1);
 
         DateTime currentDate = timeslotRepo.getDateTimeForIndex(currentTimeslot);
 
@@ -542,7 +530,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
         Integer dayOfWeekCurrent = currentDate.getDayOfWeek();
         Integer hourOfDayCurrent = currentDate.getHourOfDay();
 
-        DBObject document1 = new BasicDBObject();
+        Document document1 = new Document();
 
         document1.put("Game_Name", bootFile);
         document1.put("Date", currentDate.toString());
@@ -552,9 +540,9 @@ public class MessageManagerService implements MessageManager, Initializable, Act
         document1.put("Day_of_Week", dayOfWeekCurrent);
         document1.put("Hour_of_Day", hourOfDayCurrent);
 
-        collection1.insert(document1);
+        collection1.insertOne(document1);
       }
-      catch(Exception e){} 
+      catch(Exception e){} */
       //////////////////////////////////////////////////////////////////////////////////////////////////////
 
       int actualBiddingTimeslot = currentTimeslot - 1;
@@ -563,7 +551,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
       /* try
       {
         String col2 = "Calendar_Forecast_Info";
-        DBCollection collection2 = mongoDatabase.getCollection(col2);
+        MongoCollection<Document> collection2 = mongoDatabase.getCollection(col2);
 
         for(int proximity = 1; proximity <= 24; proximity++)
         {
@@ -575,7 +563,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
           Integer dayOfWeek = executionDate.getDayOfWeek();
           Integer hourOfDay = executionDate.getHourOfDay();
 
-          DBObject document2 = new BasicDBObject();
+          Document document2 = new Document();
 
           document2.put("Game_Name", bootFile);
           document2.put("Actual_Bidding_Date", actualBiddingDate.toString());
@@ -588,23 +576,23 @@ public class MessageManagerService implements MessageManager, Initializable, Act
           document2.put("Day_of_Week_FT", dayOfWeek);
           document2.put("Hour_of_Day_FT", hourOfDay);
 
-          collection2.insert(document2);
+          collection2.insertOne(document2);
         }
       }
-      catch(Exception e){} 
+      catch(Exception e){} */
       ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-      try
+      /* try
       {
         String col3 = "WeatherReport_Info";
-        DBCollection collection3 = mongoDatabase.getCollection(col3);
+        MongoCollection<Document> collection3 = mongoDatabase.getCollection(col3);
 
         Double temperatureCurrent = weatherInformation.getWeatherReport(currentTimeslot).getTemperature();
         Double cloudCoverCurrent = weatherInformation.getWeatherReport(currentTimeslot).getCloudCover();
         Double windSpeedCurrent = weatherInformation.getWeatherReport(currentTimeslot).getWindSpeed();
         Double windDirectionCurrent = weatherInformation.getWeatherReport(currentTimeslot).getWindDirection();
 
-        DBObject document3 = new BasicDBObject();
+        Document document3 = new Document();
 
         document3.put("Game_Name", bootFile);
         document3.put("Timeslot", currentTimeslot);
@@ -613,15 +601,15 @@ public class MessageManagerService implements MessageManager, Initializable, Act
         document3.put("Wind_Direction", windDirectionCurrent);
         document3.put("Wind_Speed", windSpeedCurrent);
 
-        collection3.insert(document3);
+        collection3.insertOne(document3);
       }
-      catch(Exception e){}
+      catch(Exception e){} */
       ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-      try
+      /* try
       {
         String col4 = "WeatherForecast_Info";
-        DBCollection collection4 = mongoDatabase.getCollection(col4);
+        MongoCollection<Document> collection4 = mongoDatabase.getCollection(col4);
 
         for(int proximity = 1; proximity <= 24; proximity++)
         {
@@ -632,7 +620,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
           Double windSpeedForecasted = weatherInformation.getWeatherForecast(actualBiddingTimeslot).getPredictions().get(proximity-1).getWindSpeed();
           Double windDirectionForecasted = weatherInformation.getWeatherForecast(actualBiddingTimeslot).getPredictions().get(proximity-1).getWindDirection();
 
-          DBObject document4 = new BasicDBObject();
+          Document document4 = new Document();
 
           document4.put("Game_Name", bootFile);
           document4.put("Bidding_Timeslot", actualBiddingTimeslot);
@@ -642,16 +630,16 @@ public class MessageManagerService implements MessageManager, Initializable, Act
           document4.put("Wind_Direction_FT", windDirectionForecasted);
           document4.put("Wind_Speed_FT", windSpeedForecasted);
 
-          collection4.insert(document4);
+          collection4.insertOne(document4);
         }
       }
       catch(Exception e){} */
       /////////////////////////////////////////////////////////////////////////////////////////////////////
 
-      try
+      /* try
       {
         String col5 = "ClearedTrade_Info";
-        DBCollection collection5 = mongoDatabase.getCollection(col5);
+        MongoCollection<Document> collection5 = mongoDatabase.getCollection(col5);
 
         for(int proximity = 1; proximity <= 24; proximity++)
         {
@@ -660,7 +648,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
           Double MCP = clearedTradeInformation.getClearedTradebyMessageTimeslot(currentTimeslot).get(executionTimeslot).getKey();
           Double netClearedQuantiy = clearedTradeInformation.getClearedTradebyMessageTimeslot(currentTimeslot).get(executionTimeslot).getValue();
 
-          DBObject document5 = new BasicDBObject();
+          Document document5 = new Document();
 
           document5.put("Game_Name", bootFile);
           document5.put("Bidding_Timeslot", actualBiddingTimeslot);
@@ -668,22 +656,22 @@ public class MessageManagerService implements MessageManager, Initializable, Act
           document5.put("MCP", MCP);
           document5.put("Net_Cleared_Quantity", netClearedQuantiy);
 
-          collection5.insert(document5);
+          collection5.insertOne(document5);
         }
       }
-      catch(Exception e){}
+      catch(Exception e){}  */
       /////////////////////////////////////////////////////////////////////////////////////////////////////
 
       try
       {
         String col6 = "MarketTransaction_Info";
-        DBCollection collection6 = mongoDatabase.getCollection(col6);
+        MongoCollection<Document> collection6 = mongoDatabase.getCollection(col6);
 
         Map<Integer, Pair<Double, Double>> MTI = marketTransactionInformation.getMarketTransactionInformationbyMessageTimeslot(currentTimeslot);
 
         for(Map.Entry<Integer, Pair<Double, Double>> message : MTI.entrySet())
         {
-          DBObject document6 = new BasicDBObject();
+          Document document6 = new Document();
 
           document6.put("Game_Name", bootFile);
           document6.put("Bidding_Timeslot", currentTimeslot-1);
@@ -691,7 +679,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
           document6.put("MCP", message.getValue().getKey());
           document6.put("Broker's_Cleared_Quantity", message.getValue().getValue());
 
-          collection6.insert(document6);
+          collection6.insertOne(document6);
         }
       }
       catch(Exception e){}
@@ -700,7 +688,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
       /* try
       {
         String col7 = "FirstUnclearedBidAsk_Info";
-        DBCollection collection7 = mongoDatabase.getCollection(col7);
+        MongoCollection<Document> collection7 = mongoDatabase.getCollection(col7);
 
         Map<Integer, Pair<Double, Double>> FUA = orderBookInformation.getFirstUnclearedAskInformation(currentTimeslot);
         Map<Integer, Pair<Double, Double>> FUB = orderBookInformation.getFirstUnclearedBidInformation(currentTimeslot);
@@ -711,7 +699,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
 
           if((FUA.get(executionTimeslot) != null) && (FUB.get(executionTimeslot) != null))
           {
-            DBObject document7 = new BasicDBObject();
+            Document document7 = new Document();
 
             document7.put("Game_Name", bootFile);
             document7.put("Bidding_Timeslot", actualBiddingTimeslot);
@@ -721,23 +709,23 @@ public class MessageManagerService implements MessageManager, Initializable, Act
             document7.put("First_Uncleared_Bid_Price", FUB.get(executionTimeslot).getKey());
             document7.put("First_Uncleared_Bid_Quantity", FUB.get(executionTimeslot).getValue());
 
-            collection7.insert(document7);
+            collection7.insertOne(document7);
           }
         }
       }
       catch(Exception e){} */
       /////////////////////////////////////////////////////////////////////////////////////////////////////
 
-      try
+      /* try
       {
         String col8 = "BalancingTransaction_and_Report_Info";
-        DBCollection collection8 = mongoDatabase.getCollection(col8);
+        MongoCollection<Document> collection8 = mongoDatabase.getCollection(col8);
 
         Double netImbalance = balancingMarketInformation.getNetImbalance(currentTimeslot);
         Double brokerImbalance = balancingMarketInformation.getBalancingTransaction(currentTimeslot).getKey();
         Double brokerImbalancePenalty = balancingMarketInformation.getBalancingTransaction(currentTimeslot).getValue();
 
-        DBObject document8 = new BasicDBObject();
+        Document document8 = new Document();
 
         document8.put("Game_Name", bootFile);
         document8.put("Timeslot", currentTimeslot);
@@ -745,22 +733,22 @@ public class MessageManagerService implements MessageManager, Initializable, Act
         document8.put("Broker's_Imbalance_Charge", brokerImbalancePenalty);
         document8.put("Net_Imbalance", netImbalance);
 
-        collection8.insert(document8);
+        collection8.insertOne(document8);
       }
-      catch(Exception e){} 
+      catch(Exception e){} */
       ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
-      try
+      /* try
       {
         String col9 = "DistributionTransaction_and_Report_Info";
-        DBCollection collection9 = mongoDatabase.getCollection(col9);
+        MongoCollection<Document> collection9 = mongoDatabase.getCollection(col9);
 
         Double totalProduction = distributionInformation.getTotalProduction(currentTimeslot);
         Double totalConsumption = distributionInformation.getTotalConsumption(currentTimeslot);
         Double distriubutionKWh = distributionInformation.getDistributionTransaction(currentTimeslot).getKey();
         Double distriubutionCharge = distributionInformation.getDistributionTransaction(currentTimeslot).getValue();
 
-        DBObject document9 = new BasicDBObject();
+        Document document9 = new Document();
 
         document9.put("Game_Name", bootFile);
         document9.put("Timeslot", currentTimeslot);
@@ -769,41 +757,41 @@ public class MessageManagerService implements MessageManager, Initializable, Act
         document9.put("Distribution_KWh", distriubutionKWh);
         document9.put("Distribution_Charge", distriubutionCharge);
 
-        collection9.insert(document9);
+        collection9.insertOne(document9);
       }
-      catch(Exception e){}
+      catch(Exception e){} */
       /////////////////////////////////////////////////////////////////////////////////////////////////////////
 
       /* try
       {
         String col10 = "Aggregated_ClearedTrade_Info";
-        DBCollection collection10 = mongoDatabase.getCollection(col10);
+        MongoCollection<Document> collection10 = mongoDatabase.getCollection(col10);
 
         Double avgMCP = wholesaleMarketInformation.getAvgMCP(currentTimeslot);
         Double totalClearedQuantity = wholesaleMarketInformation.getTotalClearedQuantity(currentTimeslot);
 
-        DBObject document10 = new BasicDBObject();
+        Document document10 = new Document();
 
         document10.put("Game_Name", bootFile);
         document10.put("Timeslot", currentTimeslot);
         document10.put("Avg_MCP", avgMCP);
         document10.put("Total_Cleared_Quantity", totalClearedQuantity);
 
-        collection10.insert(document10);
+        collection10.insertOne(document10);
       }
       catch(Exception e){} */
       ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-      try
+      /* try
       {
         String col11 = "Cash_and_Market_Position_Info";
-        DBCollection collection11 = mongoDatabase.getCollection(col11);
+        MongoCollection<Document> collection11 = mongoDatabase.getCollection(col11);
 
         Double cashPosition = cashPositionInformation.getCashPosition(currentTimeslot);
         Double bankInterest = cashPositionInformation.getBankInterest(currentTimeslot);
         Double marketPosition = marketPositionInformation.getMarketPosition(currentTimeslot);
 
-        DBObject document11 = new BasicDBObject();
+        Document document11 = new Document();
 
         document11.put("Game_Name", bootFile);
         document11.put("Timeslot", currentTimeslot);
@@ -811,15 +799,15 @@ public class MessageManagerService implements MessageManager, Initializable, Act
         document11.put("Bank_Interest", bankInterest);
         document11.put("Market_Position", marketPosition);
 
-        collection11.insert(document11);
+        collection11.insertOne(document11);
       }
-      catch(Exception e){} 
+      catch(Exception e){} */
       ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-      try
+      /* try
       {
         String col12 = "CapacityTransaction_Info";
-        DBCollection collection12 = mongoDatabase.getCollection(col12);
+        MongoCollection<Document> collection12 = mongoDatabase.getCollection(col12);
 
         List<CapacityTransactionMessage> capacityTransaction = capacityTransactionInformation.getCapacityTransaction(currentTimeslot);
 
@@ -827,7 +815,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
         {
           for(CapacityTransactionMessage message : capacityTransaction)
           {
-            DBObject document12 = new BasicDBObject();
+            Document document12 = new Document();
 
             document12.put("Game_Name", bootFile);
             document12.put("Timeslot", currentTimeslot);
@@ -836,11 +824,11 @@ public class MessageManagerService implements MessageManager, Initializable, Act
             document12.put("Exceeded_MWh", message.exceededKWh);
             document12.put("Penalty", message.charge);
 
-            collection12.insert(document12);
+            collection12.insertOne(document12);
           }
         }
       }
-      catch(Exception e){}
+      catch(Exception e){} */
       ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
       /* try
@@ -862,19 +850,19 @@ public class MessageManagerService implements MessageManager, Initializable, Act
 
               Double tariff = im.get(currentTimeslot).getUnitTariff();
 
-              DBCollection collection = mongoDatabase.getCollection(customerName);
+              MongoCollection<Document> collection13 = mongoDatabase.getCollection(customerName);
 
-              DBObject document = new BasicDBObject();
+              Document document13 = new Document();
 
-              document.put("Game Name", bootFile);
-              document.put("Timeslot", currentTimeslot);
-              document.put("Max_Usage", maxUsage);
-              document.put("Min_Usage", minUsage);
-              document.put("Avg_Usage", avgUsage);
-              document.put("Tariff", tariff);
-              document.put("Usage Per Population", usage);
+              document13.put("Game Name", bootFile);
+              document13.put("Timeslot", currentTimeslot);
+              document13.put("Max_Usage", maxUsage);
+              document13.put("Min_Usage", minUsage);
+              document13.put("Avg_Usage", avgUsage);
+              document13.put("Tariff", tariff);
+              document13.put("Usage Per Population", usage);
 
-              collection.insert(document);
+              collection13.insertOne(document13);
             }
         }
       }
@@ -919,29 +907,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
 
       Double threshold = mean + CAPACITY_TRANSACTION_GAMMA * stdev;
 
-      // System.out.println("Threshold: " + threshold + " :: UpperBound: " + upperBound);
-
       return threshold;
-    }
-    
-    /**
-     * Calculate Capacity Transaction Threshold
-     * @param timeslot
-     * @return
-     */
-    public Double calculateTolerance(Integer timeslot, double tolerance)
-    {
-      List<Double> listOfNetConsuptions = getListOfNetConsumptions();
-
-      Double mean = calculateMean(listOfNetConsuptions);
-      Double stdev = calculateStdev(listOfNetConsuptions, mean);
-
-      Double threshold = mean + CAPACITY_TRANSACTION_GAMMA * stdev;
-      Double upperBound = mean + tolerance * stdev;
-
-      // System.out.println("Threshold: " + threshold + " :: UpperBound: " + upperBound);
-
-      return upperBound;
     }
 
     /**
@@ -985,18 +951,6 @@ public class MessageManagerService implements MessageManager, Initializable, Act
       List<Double> listOfNetDemand = netDemand.entrySet().stream().map(x -> x.getValue()).collect(Collectors.toList());
 
       return listOfNetDemand;
-    }
-
-    /**
-     *
-     * @return List of net consumptions
-     */
-    public List<Double> getListOfNetConsumptions()
-    {
-      Map<Integer, Double> netConsumption = distributionInformation.getTotalConsumption();
-      List<Double> listOfNetConsumption = netConsumption.entrySet().stream().map(x -> x.getValue()).collect(Collectors.toList());
-
-      return listOfNetConsumption;
     }
 
     /**

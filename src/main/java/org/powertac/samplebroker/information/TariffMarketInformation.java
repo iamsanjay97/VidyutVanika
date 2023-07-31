@@ -144,13 +144,13 @@ public class TariffMarketInformation
 
       for(Map.Entry<TariffSpecification, Pair<Double, Double>> outer: BTMap.entrySet())
       {
-        if(outer.getKey().getPowerType().isConsumption())
+        if((outer.getKey() != null) && (outer.getKey().getPowerType().isConsumption()))
         {
           Pair<Double, Double> item = outer.getValue();
           consumption += item.getValue();
         }
 
-        if(outer.getKey().getPowerType().isProduction())
+        if((outer.getKey() != null) && (outer.getKey().getPowerType().isProduction()))
         {
           Pair<Double, Double> item = outer.getValue();
           production += item.getValue();

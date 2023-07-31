@@ -1,9 +1,6 @@
 #!/bin/bash
 
-for i in {1..1000}
+for i in {1..100000}
 do
-        mvn exec:exec
-        sleep 30      # sleep for 30 seconds
+    mvn exec:exec
 done
-
-

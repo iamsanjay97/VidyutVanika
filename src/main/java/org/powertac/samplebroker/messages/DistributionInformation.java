@@ -18,19 +18,13 @@ public class DistributionInformation
     }
 
     public void setTotalConsumption(Integer timeslot,  Double consumption)
-    {      
-      if(totalConsumption.get(timeslot) == null)
+    {
         totalConsumption.put(timeslot, consumption);
-      else
-        totalConsumption.put(timeslot, totalConsumption.get(timeslot) + consumption);
     }
 
     public Double getTotalConsumption(Integer timeslot)
     {
-      if(totalConsumption.get(timeslot) != null)
         return totalConsumption.get(timeslot);
-      else
-        return 0.0;
     }
 
     public Map<Integer, Double> getTotalConsumption()
@@ -40,18 +34,12 @@ public class DistributionInformation
 
     public void setTotalProduction(Integer timeslot, Double production)
     {
-      if(totalProduction.get(timeslot) == null)
         totalProduction.put(timeslot, production);
-      else
-        totalProduction.put(timeslot, totalProduction.get(timeslot) + production);
     }
 
     public Double getTotalProduction(Integer timeslot)
     {
-      if(totalProduction.get(timeslot) != null)
         return totalProduction.get(timeslot);
-      else
-        return 0.0;
     }
 
     public void setDistributionTransaction(Integer timeslot, Double kwh, Double charge)

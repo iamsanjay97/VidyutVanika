@@ -15,13 +15,6 @@ public interface MessageManager {
      * @return
      */
     public Double calculateThreshold();
-    
-    /**
-     * Calculate Capacity Transaction Tolerance
-     * @param timeslot
-     * @return
-     */
-    public Double calculateTolerance(Integer timeslot, double tolerance);
 
     /**
      * Returns the avg of a list
@@ -37,11 +30,6 @@ public interface MessageManager {
      * Returns the list net demands
      */
     public List<Double> getListOfNetDemands();
-
-    /**
-     *
-     */
-    public List<Double> getListOfNetConsumptions();
 
     /**
      * Returns game information object

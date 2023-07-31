@@ -1,170 +1,230 @@
 package org.powertac.samplebroker.tariffmarket;
 
+import java.util.Map;
 import java.util.List;
-
+import java.util.HashMap;
+import java.util.TreeMap;
+import java.util.ArrayList;
 import org.powertac.common.TariffSpecification;
+import org.powertac.common.enumerations.PowerType;
 import org.powertac.samplebroker.interfaces.BrokerContext;
+import org.powertac.samplebroker.util.Helper;
 
 public class TariffHeuristics 
 {
     /**
-     * HEURISTIC STRATEGY:
-     * Start with the best tariff for customers (cheapest tariff) available [could be a configurable parameter based on game-size]. After 3.5 days publish 
-     * next (second cheapest) tariff and record revenue of the previous tariff 
-     * [revenue per timeslot = (profit from tariff - wholesale cost - possible peak penalty on highest three peaks in previous 3.5 days window*0.5)/number_of_timeslots_passed].
-     * After the end of 1st week, check the revenue of the 2nd tariff in the same way as previous (without using true peak penalties). Also calculate the true 
-     * revenue for both the windows using true peak penalties. 
-     * If second tariff did better than first in terms of revenue, go to next (third cheapest) tariff and so on. If second tariff earned even less revenue 
-     * than first go back to first tariff. If first tariff is also not generating revenue (revenue < 0), then go to fixed CROC TOU tariff (tariff of last resort). 
-     * Repeat this process for 4 weeks, after that use the best tariff so far in terms of revenue, keep checking revenue every 1 week therafter and publish best 
-     * tariff so far everytime after that (if the current tariff is the best so far, then maintain it). 
+     * HEURISTIC STRATEGY INSPIRED BY THE IDEA OF MAINTING THE MARKET-SHARE BETWEEN CERTAIN BOUNDS:
+     *  --> Pulish CONSUMPTION, INTERUPPTIBLE_CONSUMPTION, PRODUCTION, THERMAL_STORAGE_CONSUMPTION and BATTERY_STORAGE tariffs, 
+     *      keep updating all the tariffs frequently based on market condition.  
+     *  --> PRODUCTION tariff should be such that its offer avg_rate value is less than CONSUMPTION 
+     *      tariff avg_rate value; except in rare cases where we need to have PRODUCTION customers to
+     *      maintain balanced portfolio and all competitor tariffs are higher than our CONSUMPTION rate
+     *      value then offer PRODUCTION tariff rate value up to our minimum viable cost.
      * 
-     * Note: Revoke previous tariff before publishing the new tariff. (revenue > 0) should be always true for any tariff.
+     *  Goal1: To have overall market-share (after combining market-shares of all the activate tariffs) 
+     *         between the certain lower and higher bounds. 
+     *  Goal2: Published tariff should be such which don't make our demand peaks coinside with market-
+     *         peaks, to reduce the effect of capacity transaction penalties.
+     * 
+     * How to evaluate tariffs --> Use evaluateCost() function which takes only tariff spec as input. 
+     * 
+     * How to convert a FPT to weekly TOUT of desired structure --> look TariffGenerator class  
      */
 
     private BrokerContext brokerContext;
     private TariffGenerator tariffGenerator;
     private TariffStatistics tariffStatistics;
-    private List<Double[]> generatedRates;
-    private TariffSpecification generatedTariffOfLastResort;
+    private PowerType[] offeredPowerTypes;
+    private Map<PowerType, Double> initialAvgRates;
+    private boolean utilityFlag = false;
 
-    private TariffSpecification currentTariff;
-
-    private int initialTariffIndex;
-    private int currentTariffIndex;
-    private int lastTariffIndex;
-    private int numberOfTariffs;
-
-    public TariffHeuristics(BrokerContext brokerCtx, int gameSize)
+    public TariffHeuristics(BrokerContext brokerCtx)
     {
         brokerContext = brokerCtx;
         tariffGenerator = new TariffGenerator();
         tariffStatistics = new TariffStatistics();
-        generatedRates = tariffGenerator.getGeneratedRates();
-        generatedTariffOfLastResort = tariffGenerator.generateTariffOfLastResort(brokerCtx);
+        offeredPowerTypes = new PowerType[] { PowerType.PRODUCTION, PowerType.CONSUMPTION, PowerType.THERMAL_STORAGE_CONSUMPTION, PowerType.BATTERY_STORAGE};//, PowerType.INTERRUPTIBLE_CONSUMPTION};
 
-        currentTariff = null;
+        // set initial avg rate-values of all the tariffs
+        initialAvgRates = new HashMap<>();
+        initialAvgRates.put(PowerType.PRODUCTION, 0.03);
+        initialAvgRates.put(PowerType.CONSUMPTION, -0.18);
+        initialAvgRates.put(PowerType.THERMAL_STORAGE_CONSUMPTION, -0.18);
+        // initialAvgRates.put(PowerType.INTERRUPTIBLE_CONSUMPTION, -0.18);
+        initialAvgRates.put(PowerType.BATTERY_STORAGE, -0.18);
+    }
 
-        if(gameSize <= 3)
-            initialTariffIndex = 5;        
-        else if(gameSize <= 5)
-            initialTariffIndex = 3;
-        else
-            initialTariffIndex = 2;
+    public List<TariffSpecification> getInitialTariffs()
+    {
+        List<TariffSpecification> initialTariffs = new ArrayList<>();
+        // offeredPowerTypes = new PowerType[] {PowerType.CONSUMPTION};   // temporary
+        for(PowerType pType: offeredPowerTypes)
+        {
+            if(pType.isConsumption())
+                initialTariffs.add(tariffGenerator.generateWeeklyTOUTariff(brokerContext, initialAvgRates.get(pType), pType));
+            else
+                initialTariffs.add(tariffGenerator.generateFPTariff(brokerContext, initialAvgRates.get(pType), pType, true));
+        }
+        return initialTariffs;
+    }
 
-        currentTariffIndex = initialTariffIndex;
-        lastTariffIndex = -1;
-        numberOfTariffs = tariffGenerator.getNumberOfTariffs();
+    public List<TariffSpecification> getDefaultBrokerTariffs(Double ap)
+    {
+        List<TariffSpecification> initialTariffs = new ArrayList<>();
+
+        // Double consRate = -ap*profitRate;
+        // Double prodRate = ap/profitRate;
+
+        // initialTariffs.add(tariffGenerator.generateFPTariff(brokerContext, consRate, PowerType.CONSUMPTION, false));    
+        initialTariffs.add(tariffGenerator.generateFPTariff(brokerContext, ap, PowerType.PRODUCTION, false));
+        // initialTariffs.add(tariffGenerator.generateFPTariff(brokerContext, -0.50, PowerType.STORAGE));
+        
+        return initialTariffs;
+    }
+
+    public Double getTariffAvgRate(TariffSpecification spec)
+    {
+        return tariffStatistics.getTariffAvgRate(spec.getId());
+    }
+
+    public void createTariffStateBook(TariffSpecification spec)
+    {
+        Double avgRate = Helper.evaluateCost(spec, utilityFlag);
+        tariffStatistics.createStateBook(spec.getId(), avgRate);
     }
     
-    public void updateTariffStats(Double tariffRevenue, Double wholesaleCost, Double demand, Double percBrokerDemand)
+    public void updateTariffStats(Long tariffID, Double tariffMarketShare, Double usage, Double tariffRevenue, Double wholesaleCost, Double demand, Double percBrokerDemand)
     {
-        tariffStatistics.updateStatBook(currentTariffIndex, tariffRevenue, wholesaleCost, demand, percBrokerDemand);
+        tariffStatistics.updateStatBook(tariffID, tariffMarketShare, usage, tariffRevenue, wholesaleCost, demand, percBrokerDemand);
     }
 
-    public TariffSpecification getInitialTariff()
+    public Boolean isTariffHealthy(TariffSpecification spec, Double TARIFF_LOWER_BOUND, Double TARIFF_UPPER_BOUND, Boolean isProduction)
     {
-        Double[] rates = generatedRates.get(initialTariffIndex);
-        TariffSpecification spec = tariffGenerator.generateBlockTOUTariff(brokerContext, rates);
-        currentTariff = spec;
-        return spec;
-    }
+        double avgRate = tariffStatistics.getTariffAvgRate(spec.getId());
+        double tariffMarketShare = tariffStatistics.getTariffMarketShare(spec.getId());
+        double tariffProfit = tariffStatistics.getTariffProfit(spec.getId());
+        System.out.println(spec.getId() + " :: " + tariffProfit + " :: " + tariffMarketShare);
 
-    public Double getTariffRevenuePerTimeslot(double threshold, Boolean save)
-    {
-        return tariffStatistics.getTariffRevenuePerTimeslot(currentTariffIndex, threshold, save);
-    }
-
-    public Double getAvgTariffRevenuePerTimeslotOfCurrentTariff()
-    {
-        return tariffStatistics.getAvgRevenueOfTariff(currentTariffIndex);
-    }
-
-    public Double getAvgTariffRevenuePerTimeslotOfPrevTariff()
-    {
-        if(currentTariffIndex != 0)
-            return tariffStatistics.getAvgRevenueOfTariff(currentTariffIndex-1);
-        else    
-            return -1e9;
-    }
-
-    public TariffSpecification getCurrentTariff()
-    {
-        return currentTariff;
-    }
-
-    public Integer getCurrentTariffIndex()
-    {
-        return currentTariffIndex;
-    }
-
-    public TariffSpecification getNextTariff()
-    {
-        if(currentTariffIndex == (numberOfTariffs-1))   // Signal that the current tariff is the best (costliest) available, no need to publish a new tariff
-            return null;
-        else
+        if(isProduction)
         {
-            lastTariffIndex = currentTariffIndex;
-            currentTariffIndex++;
-            
-            Double[] rates = generatedRates.get(currentTariffIndex);
-            TariffSpecification spec = tariffGenerator.generateBlockTOUTariff(brokerContext, rates); 
-            currentTariff = spec;
-
-            return spec;
-        }
-    }
-
-    public TariffSpecification getPrevTariff()
-    {
-        if(currentTariffIndex == 0)   // Signal that the current tariff is the cheapest available, if even that is not good then publish tariff of last resort 
-        {
-            lastTariffIndex = currentTariffIndex;
-            currentTariff = generatedTariffOfLastResort;
-            return generatedTariffOfLastResort;
+            if((avgRate > 0.0) && (TARIFF_LOWER_BOUND <= tariffMarketShare) && (tariffMarketShare <= TARIFF_UPPER_BOUND))
+                return true;
+            else
+                return false;
         }
         else
         {
-            lastTariffIndex = currentTariffIndex;
-            currentTariffIndex--;
-
-            Double[] rates = generatedRates.get(currentTariffIndex);
-            TariffSpecification spec = tariffGenerator.generateBlockTOUTariff(brokerContext, rates); 
-            currentTariff = spec;
-
-            return spec;
+            if((avgRate < 0.0) && (tariffProfit >= 0) && ((TARIFF_LOWER_BOUND <= tariffMarketShare) && (tariffMarketShare <= TARIFF_UPPER_BOUND)))
+                return true;
+            else
+                return false;
         }
     }
 
-    public Integer getLastTariffIndex()
+    public Double getCumulativeMarketShare(List<TariffSpecification> specs)
     {
-        return lastTariffIndex;
+        Double cMarketShare = 0.0;
+        for(TariffSpecification spec: specs)
+            cMarketShare += tariffStatistics.getTariffAvgMarketShare(spec.getId());
+        return cMarketShare;
     }
 
-    public TariffSpecification getTariffOfLastResort()
+    public Double getLeastSubscribedTariffAvgRate(List<TariffSpecification> specs)
     {
-        return generatedTariffOfLastResort;
-    }
-
-    public TariffSpecification getTheBestTariff()
-    {
-        Integer index = tariffStatistics.getIndexOfBestTariff();
-
-        if(index == currentTariffIndex)            // current tariff is the best tariff
+        Double marketShare = 1.0;
+        TariffSpecification leastSubscribedTariff = null;
+        for(TariffSpecification spec: specs)
+        {
+           Double mShare = tariffStatistics.getTariffMarketShare(spec.getId());
+           
+           if(mShare < marketShare)
+           {
+               marketShare = mShare;
+               leastSubscribedTariff = spec;
+           }
+        }
+        if(leastSubscribedTariff != null)
+            return tariffStatistics.getTariffAvgRate(leastSubscribedTariff.getId());
+        else
             return null;
-
-        Double[] rates = generatedRates.get(index);
-        TariffSpecification spec = tariffGenerator.generateBlockTOUTariff(brokerContext, rates); 
-
-        lastTariffIndex = currentTariffIndex;
-        currentTariffIndex = index;
-        currentTariff = spec;
-
-        return spec;
     }
 
-    public Integer getBestTariffIndex()
+    public Double getMostSubscribedTariffAvgRate(List<TariffSpecification> specs)
     {
-        return tariffStatistics.getIndexOfBestTariff();
+        Double marketShare = 0.0;
+        TariffSpecification mostSubscribedTariff = null;
+        for(TariffSpecification spec: specs)
+        {
+           Double mShare = tariffStatistics.getTariffMarketShare(spec.getId());
+           
+           if(mShare > marketShare)
+           {
+               marketShare = mShare;
+               mostSubscribedTariff = spec;
+           }
+        }
+        if(mostSubscribedTariff != null)
+            return tariffStatistics.getTariffAvgRate(mostSubscribedTariff.getId());
+        else
+            return null;
+    }
+
+    public TreeMap<Double, TariffSpecification> sortTariffsByCost(List<TariffSpecification> specs, String powerType)
+    {
+        TreeMap<Double, TariffSpecification> sortedTariffs = new TreeMap<>();
+        for(TariffSpecification spec: specs)
+        {
+            Double avgRate = tariffStatistics.getTariffAvgRate(spec.getId());
+
+            if(powerType.equals("CONSUMPTION") && (avgRate < 0.0))
+                sortedTariffs.put(avgRate, spec);
+            else if(powerType.equals("PRODUCTION") && (avgRate > 0.0))
+                sortedTariffs.put(avgRate, spec);
+            else 
+                sortedTariffs.put(avgRate, spec);
+        }
+        return sortedTariffs;
+    }
+
+    public Double increseTariffAvgRate(Double avgRate)
+    {
+        return tariffGenerator.increseTariffAvgRate(avgRate);
+    }
+
+    public Double decreseTariffAvgRate(Double avgRate)
+    {
+        return tariffGenerator.decreseTariffAvgRate(avgRate);
+    }
+
+    public TariffSpecification improveConsTariffs(Double avgRate, PowerType powerType)
+    {
+        TariffSpecification improvedTariff = tariffGenerator.generateWeeklyTOUTariff(brokerContext, avgRate, powerType);
+        return improvedTariff;
+    }
+
+    public TariffSpecification improveProdTariffs(Double avgRate, PowerType powerType)
+    {
+        TariffSpecification improvedTariff = tariffGenerator.generateFPTariff(brokerContext, avgRate, powerType, true);
+        return improvedTariff;
+    }
+
+    public void resetMarketShareinStatBook(TariffSpecification spec)
+    {
+        tariffStatistics.resetMarketShareinStatBook(spec.getId());
+    }
+
+    public void removeFromStatBook(TariffSpecification spec)
+    {
+        tariffStatistics.removeFromStatBook(spec.getId());
+    }
+
+    public String toString()
+    {
+        return tariffStatistics.toString();
+    }
+
+    public TariffStatistics getTariffStatistics()
+    {
+        return tariffStatistics;
     }
 }

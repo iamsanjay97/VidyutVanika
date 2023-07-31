@@ -4,17 +4,15 @@ public class UsageRecord {
 
     int timeOfday;
     int dayOfWeek;
-    int blockNumber;
     int subscribedPopulation;
     double unitTariff;
     double consumptionPerPopulation;
 
     UsageRecord(){}
 
-    public UsageRecord(int timeOfday, int dayOfWeek, int blockNumber, int subscribedPopulation, double unitTariff, double consumptionPerPopulation){
+    public UsageRecord(int timeOfday, int dayOfWeek, int subscribedPopulation, double unitTariff, double consumptionPerPopulation){
         this.timeOfday = timeOfday;
         this.dayOfWeek = dayOfWeek;
-        this.blockNumber = blockNumber;
         this.unitTariff = unitTariff;
         this.subscribedPopulation = subscribedPopulation;
         this.consumptionPerPopulation = consumptionPerPopulation;
@@ -26,10 +24,6 @@ public class UsageRecord {
 
     public int getDayOfWeek() {
         return dayOfWeek;
-    }
-
-    public int getBlockNumber(){
-        return blockNumber;
     }
 
     public double getUnitTariff(){
@@ -46,7 +40,7 @@ public class UsageRecord {
 
     public String toString(){
 
-        return Integer.toString(timeOfday) + ", " + Integer.toString(dayOfWeek) + ", " + Integer.toString(blockNumber) + ", " + Integer.toString(subscribedPopulation) + ", " + Double.toString(unitTariff) + ", " + Double.toString(consumptionPerPopulation);
+        return Integer.toString(timeOfday) + ", " + Integer.toString(dayOfWeek) + ", " + Integer.toString(subscribedPopulation) + ", " + Double.toString(unitTariff) + ", " + Double.toString(consumptionPerPopulation);
     }
 
 }

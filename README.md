@@ -1,7 +1,7 @@
-VidyutVanika21 (Heuristics Based Tariff Generation and Peak Prediction)
+VidyutVanika22 (Learning based Tariff Generation, DDPG-based Biding Strategy)
 =======================
 
-This branch contains the code of the champion broker of PowerTAC 2021 tournament. This broker adopts sample broker's wholesale strategy and sample broker's customer usage predictor module. In tariff market, it applies heuristic based strategy that chooses the best CONSUMPTION tariff by comparing the revenue of previous tariffs. It also offers PRODUCTION tariff which gets updated periodically based on opponents best PRODUCTION tariff and viable price. Lastly it offers BATTERY_STORAGE tariff and employs Peak-detecting module to detect peaks and then execute ECE events using STORAGE tariff for those peaks.
+This branch contains the code of the champion broker of PowerTAC 2022 tournament. This broker adopts sample broker's customer usage predictor module. In wholesale market, it uses Equilibrium analysis based bidding strategy that learns the optimal bidding, implemented using DDPG based RL strategy. In tariff market, it applies MAB-based learning strategy that is designed based on game theoretical analysis of market share and learns the optimal market share during the game. It also offers PRODUCTION tariff which gets updated periodically based on opponents best PRODUCTION tariff and viable price. Lastly it offers BATTERY_STORAGE tariff and employs Peak-detecting module to detect peaks and then execute ECE events using STORAGE tariff for those peaks.
 
 Power TAC Sample Broker
 =======================

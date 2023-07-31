@@ -29,5 +29,7 @@ public interface MarketManager
    */
   public double getMeanMarketPrice ();
 
+  public Double get_exponentialaverage_misodemand();
+
   public SubmittedBidInformation getSubmittedBidInformation();
 }
