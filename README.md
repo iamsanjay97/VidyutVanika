@@ -1,7 +1,14 @@
-VidyutVanika -- The Autonomous Broker for Power Trading Agent Competition (PowerTAC)
+VidyutVanika21 (Tariff Heuristics and Peak Prediction)
 =======================
 
-VidyutVanika is an autonomous broker PowerTAC. VidyutVanika contains (i) a wholesale market module that handles bidding in day ahead energy auctions, (ii) a tariff market module that generates attractive and profitable tariff contracts, and (iii) a message manager module that collects all the data coming from server and stores it in appropriate repositories.
+This branch contains the code used for PowerTAC 2021 trials2, which was 2nd best performing broker in the trials. This broker adopts sample broker's wholesale strategy and sample broker's customer usage predictor module. In tariff market, it applies heuristic based strategy that chooses the best CONSUMPTION tariff by comparing the revenue of previous tariffs. It also offers PRODUCTION tariff which gets updated periodically based on opponents best PRODUCTION tariff and viable price. Lastly it offers BATTERY_STORAGE tariff and employs Peak-detecting module to detect peaks and then execute ECE events using STORAGE tariff for those peaks.
+
+Power TAC Sample Broker
+=======================
+
+The sample broker is intended to help broker developers by providing both a foundation that interfaces correctly with the Power TAC infrastructure, and an example of a working broker agent. It handles all message types and operates in both wholesale and retail markets. It issues a set of tariffs as soon as possible, one for each PowerType detected in the customer records given in the bootstrap dataset. It then trades in the wholesale market using essentially the same strategy as the default broker. 
+
+Without changing anything, the current version assumes the server is running on localhost, and is not picky about passwords. You can change the server URL by editing the broker.properties file, or by using your own properties file. Passwords are generally ignored outside a tournament environment.
 
 Import into IDE
 ---------------

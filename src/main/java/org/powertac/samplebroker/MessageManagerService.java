@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2019-2020 by the original author
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.powertac.samplebroker;
 
 import java.io.File;
@@ -13,6 +29,7 @@ import java.util.Random;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.Vector;
+import java.util.stream.Collectors;
 import java.util.SortedMap;
 import java.util.SortedSet;
 import java.util.ArrayList;
@@ -25,6 +42,7 @@ import org.joda.time.DateTime;
 import org.powertac.common.*;
 import org.powertac.common.enumerations.PowerType;
 import org.powertac.common.msg.*;
+import org.powertac.common.config.ConfigurableValue;
 import org.powertac.common.repo.TimeslotRepo;
 import org.powertac.samplebroker.core.BrokerPropertiesService;
 import org.powertac.samplebroker.information.CustomerUsageInformation;
@@ -39,6 +57,7 @@ import org.powertac.samplebroker.interfaces.MessageManager;
 import org.powertac.samplebroker.interfaces.Initializable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.powertac.samplebroker.util.Helper;
 
 import com.mongodb.*;
 import com.mongodb.BasicDBObject;
@@ -49,7 +68,7 @@ import com.mongodb.client.MongoDatabase;
 import com.mongodb.MongoClient;
 import com.mongodb.MongoCredential;
 import com.mongodb.client.MongoCollection;
-import org.bson.Document;
+import org.bson.Document; 
 
 
 @Service // Spring creates a single instance at startup
@@ -102,6 +121,13 @@ public class MessageManagerService implements MessageManager, Initializable, Act
     //Data structure to store usage information of individual customers
     CustomerUsageInformation custUsageInfo;
 
+    NetDemandRecord netDemandRecord;
+
+    Map<Integer, Double> netDemand;
+
+    @ConfigurableValue(valueType = "Double", description = "Capacity Transaction Gamma Value")
+    private static final Double CAPACITY_TRANSACTION_GAMMA = 1.22;
+
     //Default broker consumption tariff
     Double dfConsumptionRate = 0.0;
 
@@ -116,10 +142,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
     //MongoDB database
     DB mongoDatabase;
 
-    String dbname;
-
-    //Game Name
-    String bootFile;
+    String dbname; 
 
     List<String> brokers;
 
@@ -131,6 +154,9 @@ public class MessageManagerService implements MessageManager, Initializable, Act
     int OFFSET = 24;
 
     Random rand;
+
+    private List<String> listOfTargetedConsumers;
+    private List<String> listOfTargetedProducers;
 
     /**
      * Default constructor.
@@ -161,19 +187,15 @@ public class MessageManagerService implements MessageManager, Initializable, Act
         wholesaleMarketInformation = new WholesaleMarketInformation();
         orderBookInformation = new OrderBookInformation();
         custUsageInfo = new CustomerUsageInformation(alpha,brokerContext.getUsageRecordLength());
-        dbname = "PowerTAC2020_ZIP";
+        dbname = "PowerTAC2021_Trials2";
+
+        netDemand = new HashMap<>();
+        netDemandRecord = new NetDemandRecord();
 
         rand = new Random();
 
-        try
-        {
-          File file = new File("currentBootFile.txt");
-          BufferedReader br = new BufferedReader(new FileReader(file));
-
-          bootFile = br.readLine();
-        }
-        catch(IOException e)
-        {}
+        listOfTargetedConsumers = Helper.getListOfTargetedConsumers();
+        listOfTargetedProducers = Helper.getListOfTargetedProducers();
 
         try
         {
@@ -184,8 +206,8 @@ public class MessageManagerService implements MessageManager, Initializable, Act
         {
             log.warn("Mongo DB connection Exception " + e.toString());
         }
-        log.info(" Connected to Database PowerTAC2019 -- Broker Initialize");
-        System.out.println("Connected to Database " + dbname + " from Initialize in MessageManager");
+        log.info(" Connected to Database " + dbname + " -- Broker Initialize");
+        System.out.println("Connected to Database " + dbname + " from Initialize in MessageManager"); 
     }
 
     // --------------- message handling -----------------
@@ -250,12 +272,27 @@ public class MessageManagerService implements MessageManager, Initializable, Act
        Integer population = gameInformation.getPopulation(customerName);
 
        for (int i = 0; i < dataLength; i++) {
-           index = i % uLength;
-           usage = Math.abs(cbd.getNetUsage()[i]) / population;
-           bootUsage.add(new Double(usage));
-           temp += usage;
-           custUsageInfo.setCustomerUsageProjectionMap(customerName, index, usage);
-           custUsageInfo.setCustomerUsageMap(customerName, i+OFFSET, usage);
+          index = i % uLength;
+          usage = Math.abs(cbd.getNetUsage()[i]) / population;
+          bootUsage.add(Double.valueOf(usage));
+          temp += usage;
+          custUsageInfo.setCustomerUsageProjectionMap(customerName, index, usage);
+          custUsageInfo.setCustomerUsageMap(customerName, i+OFFSET, usage);
+
+          if(cbd.getPowerType().isConsumption())
+            distributionInformation.setTotalConsumption(i+OFFSET, Math.abs(cbd.getNetUsage()[i]));
+          else if(cbd.getPowerType().isProduction())
+            distributionInformation.setTotalProduction(i+OFFSET, Math.abs(cbd.getNetUsage()[i]));
+
+          Double demand = netDemand.get(i);
+
+          if(demand != null)
+          {
+            demand -= cbd.getNetUsage()[i];
+            netDemand.put(i, demand);
+          }
+          else
+            netDemand.put(i, -cbd.getNetUsage()[i]);
        }
 
        Double maxBootUsage = Collections.max(bootUsage);
@@ -309,6 +346,38 @@ public class MessageManagerService implements MessageManager, Initializable, Act
         distributionInformation.setTotalConsumption(timeslot, dr.getTotalConsumption());
         distributionInformation.setTotalProduction(timeslot, dr.getTotalProduction());
         //System.out.println("Total Consumption : " + dr.getTotalConsumption() + ", Total Production : " + dr.getTotalProduction());
+
+        netDemand.put(timeslot, dr.getTotalConsumption() - dr.getTotalProduction());
+        netDemandRecord.localProduceConsumeNetDemand((dr.getTotalConsumption() - dr.getTotalProduction()), timeslot);  
+
+        List<Double> listOfNetDemands = getListOfNetDemands();
+
+        Double mean = calculateMean(listOfNetDemands);
+        Double stdev = calculateStdev(listOfNetDemands, mean);
+
+        Double currentDemand = dr.getTotalConsumption() - dr.getTotalProduction();
+        Double threshold = mean + CAPACITY_TRANSACTION_GAMMA * stdev;
+
+        Double exceededThreshold = Math.max(0.0, (currentDemand - threshold));
+        capacityTransactionInformation.setExceededThresholdMap(timeslot, exceededThreshold);
+
+        try
+        {
+          String col12 = "Capacity_Transaction_Net_Demand_Info";
+          DBCollection collection12 = mongoDatabase.getCollection(col12);
+
+          DBObject document12 = new BasicDBObject();
+
+          document12.put("Game_Name", gameInformation.getName());
+          document12.put("Timeslot", timeslot);
+          document12.put("Mean", mean);
+          document12.put("Stdev", stdev);
+          document12.put("Threshold", threshold);
+          document12.put("Demand", currentDemand);
+
+          collection12.insert(document12);
+        }
+        catch(Exception e){}
     }
 
     /**
@@ -318,6 +387,9 @@ public class MessageManagerService implements MessageManager, Initializable, Act
     {
         //System.out.println("Broker's Imbalance : " + bt.getKWh() + " , Charge : " + bt.getCharge());
         balancingMarketInformation.setBalancingTransaction(bt.getPostedTimeslotIndex(), bt.getKWh(), bt.getCharge());
+
+        Double mWh = bt.getKWh() / 1000.0;
+        Double chargePerMWh = Math.abs(bt.getCharge() / mWh);
     }
 
     /**
@@ -337,6 +409,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
      */
     public synchronized void handleMessage (CapacityTransaction ct)
     {
+        // System.out.println(ct.getPostedTimeslotIndex() + " : " + ct.getPeakTimeslot() + " : " + ct.getThreshold() + " : " + ct.getKWh() + " : " + ct.getCharge());
         capacityTransactionInformation.setCapacityTransaction(ct.getPostedTimeslotIndex(), ct.getPeakTimeslot(), ct.getThreshold(),ct.getKWh(), ct.getCharge());
         log.info("Capacity tx: " + ct.getCharge());
     }
@@ -350,7 +423,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
         int timeslot = cp.getPostedTimeslotIndex();
         cashPositionInformation.setCashPosition(timeslot, cash);
         log.info("Cash position: " + cash);
-        //System.out.println("CashPosition : " + cash);
+        // System.out.println("CashPosition : " + cash);
     }
 
     /**
@@ -360,9 +433,8 @@ public class MessageManagerService implements MessageManager, Initializable, Act
     public void handleMessage (BankTransaction btx)
     {
         cashPositionInformation.setBankInterest(btx.getPostedTimeslotIndex(), btx.getAmount());
-        //System.out.println("Bank Interest : " + btx.getAmount());
+        // System.out.println("Bank Interest : " + btx.getAmount());
     }
-
 
     /**
      * MarketPosition information
@@ -372,7 +444,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
     {
         marketPositionInformation.setMarketPosition(mp.getTimeslotIndex(), mp.getOverallBalance());
         brokerContext.getBroker().addMarketPosition(mp, mp.getTimeslotIndex());
-        System.out.println("Timeslot : " + mp.getTimeslotIndex() + ", MarketPosition : " + mp.getOverallBalance());
+        // System.out.println("Timeslot : " + mp.getTimeslotIndex() + ", MarketPosition : " + mp.getOverallBalance());
     }
 
     /**
@@ -381,27 +453,29 @@ public class MessageManagerService implements MessageManager, Initializable, Act
 
     public void handleMessage(MarketTransaction mt)
     {
-        //System.out.println("MarketTransaction Message :: Timeslot : " + mt.getTimeslotIndex() + ", MCP : " + mt.getPrice() + ", Cleared Quantity : " + mt.getMWh());
+        //if(Math.abs(mt.getMWh()) > 0.01)
+        // System.out.println("MarketTransaction Message :: Timeslot : " + mt.getTimeslotIndex() + ", MCP : " + mt.getPrice() + ", Cleared Quantity : " + mt.getMWh());
+
         Integer messageTimeslot = mt.getPostedTimeslotIndex();
         Integer executionTimeslot = mt.getTimeslotIndex();
         marketTransactionInformation.setMarketTransactionInformationbyExectionTimeslot(executionTimeslot, messageTimeslot, mt.getPrice(), mt.getMWh());
         marketTransactionInformation.setMarketTransactionInformationbyMessageTimeslot(messageTimeslot, executionTimeslot, mt.getPrice(), mt.getMWh());
-        wholesaleMarketInformation.setWholesaleMarketCostMap(executionTimeslot, (mt.getPrice()*mt.getMWh()));
+        marketTransactionInformation.setBrokerWholesaleCostMap(executionTimeslot, mt.getPrice(), mt.getMWh());
+        wholesaleMarketInformation.setTotalClearedQuantity(executionTimeslot, mt.getMWh());
+        wholesaleMarketInformation.setMeanMarketPrice(mt.getPrice(), mt.getMWh());
     }
-
 
     /**
      * Cleared Trade information
      */
     public void handleMessage(ClearedTrade ct)
     {
-        System.out.println("ClearedTrade Message :: Timeslot : " + ct.getTimeslotIndex() + ", MCP : " + ct.getExecutionPrice() + ", Cleared Quantity : " + ct.getExecutionMWh());
+        //System.out.println("ClearedTrade Message :: Timeslot : " + ct.getTimeslotIndex() + ", MCP : " + ct.getExecutionPrice() + ", Cleared Quantity : " + ct.getExecutionMWh());
         Integer messageTimeslot = timeslotRepo.getTimeslotIndex(ct.getDateExecuted());
         Integer executionTimeslot = ct.getTimeslotIndex();
         clearedTradeInformation.setClearedTradebyMessageTimeslot(messageTimeslot, executionTimeslot, ct.getExecutionPrice(), ct.getExecutionMWh());
         clearedTradeInformation.setClearedTradebyExecutionTimeslot(executionTimeslot, messageTimeslot, ct.getExecutionPrice(), ct.getExecutionMWh());
-        wholesaleMarketInformation.setAvgMCP(executionTimeslot, ct.getExecutionPrice());
-        wholesaleMarketInformation.setTotalClearedQuantity(executionTimeslot, ct.getExecutionMWh());
+        wholesaleMarketInformation.setAvgMCP(executionTimeslot, ct.getExecutionPrice(), ct.getExecutionMWh());
     }
 
     /**
@@ -430,9 +504,9 @@ public class MessageManagerService implements MessageManager, Initializable, Act
     public synchronized void handleMessage(TimeslotComplete ts)
     {
       int currentTimeslot = ts.getTimeslotIndex();
-      System.out.println("From TimeslotComplete : " + currentTimeslot);
+      String bootFile = gameInformation.getName();
 
-      /*try
+      /* try
       {
         if(currentTimeslot == 362)
         {
@@ -453,7 +527,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
           collection0.insert(document0);
         }
       }
-      catch(Exception e){}
+      catch(Exception e){} */
       ////////////////////////////////////////////////////////////////////////////////////////////////////
 
       try
@@ -480,13 +554,13 @@ public class MessageManagerService implements MessageManager, Initializable, Act
 
         collection1.insert(document1);
       }
-      catch(Exception e){} */
+      catch(Exception e){} 
       //////////////////////////////////////////////////////////////////////////////////////////////////////
 
       int actualBiddingTimeslot = currentTimeslot - 1;
       DateTime actualBiddingDate = timeslotRepo.getDateTimeForIndex(actualBiddingTimeslot);
 
-      /*try
+      /* try
       {
         String col2 = "Calendar_Forecast_Info";
         DBCollection collection2 = mongoDatabase.getCollection(col2);
@@ -517,7 +591,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
           collection2.insert(document2);
         }
       }
-      catch(Exception e){}
+      catch(Exception e){} 
       ////////////////////////////////////////////////////////////////////////////////////////////////////
 
       try
@@ -597,7 +671,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
           collection5.insert(document5);
         }
       }
-      catch(Exception e){} 
+      catch(Exception e){}
       /////////////////////////////////////////////////////////////////////////////////////////////////////
 
       try
@@ -623,7 +697,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
       catch(Exception e){}
       //////////////////////////////////////////////////////////////////////////////////////////////////////
 
-      /*try
+      /* try
       {
         String col7 = "FirstUnclearedBidAsk_Info";
         DBCollection collection7 = mongoDatabase.getCollection(col7);
@@ -651,7 +725,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
           }
         }
       }
-      catch(Exception e){}
+      catch(Exception e){} */
       /////////////////////////////////////////////////////////////////////////////////////////////////////
 
       try
@@ -673,7 +747,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
 
         collection8.insert(document8);
       }
-      catch(Exception e){}
+      catch(Exception e){} 
       ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
       try
@@ -700,7 +774,7 @@ public class MessageManagerService implements MessageManager, Initializable, Act
       catch(Exception e){}
       /////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-      try
+      /* try
       {
         String col10 = "Aggregated_ClearedTrade_Info";
         DBCollection collection10 = mongoDatabase.getCollection(col10);
@@ -739,10 +813,10 @@ public class MessageManagerService implements MessageManager, Initializable, Act
 
         collection11.insert(document11);
       }
-      catch(Exception e){}
+      catch(Exception e){} 
       ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-      /*try
+      try
       {
         String col12 = "CapacityTransaction_Info";
         DBCollection collection12 = mongoDatabase.getCollection(col12);
@@ -769,66 +843,160 @@ public class MessageManagerService implements MessageManager, Initializable, Act
       catch(Exception e){}
       ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-      try
+      /* try
       {
         Map<String, Map<Integer, UsageRecord>> consumptionInfoMap = custUsageInfo.getCustomerAcutalUsageMap();
 
         for (Map.Entry<String, Map<Integer, UsageRecord>> om: consumptionInfoMap.entrySet())
         {
             String customerName = om.getKey();
-            Map<Integer, UsageRecord> im = om.getValue();
 
-            Double maxUsage = custUsageInfo.getCustomerMaxUsage(customerName);
-            Double minUsage = custUsageInfo.getCustomerMinUsage(customerName);
-            Double avgUsage = custUsageInfo.getCustomerAvgUsageMap(customerName);
-            Double usage = im.get(currentTimeslot).getConsumptionPerPopulation();
+            if(listOfTargetedConsumers.contains(customerName) || listOfTargetedProducers.contains(customerName))
+            {
+              Map<Integer, UsageRecord> im = om.getValue();
 
-            Double tariff = im.get(currentTimeslot).getUnitTariff();
+              Double maxUsage = custUsageInfo.getCustomerMaxUsage(customerName);
+              Double minUsage = custUsageInfo.getCustomerMinUsage(customerName);
+              Double avgUsage = custUsageInfo.getCustomerAvgUsageMap(customerName);
+              Double usage = im.get(currentTimeslot).getConsumptionPerPopulation();
 
-            DBCollection collection = mongoDatabase.getCollection(customerName);
+              Double tariff = im.get(currentTimeslot).getUnitTariff();
 
-            DBObject document = new BasicDBObject();
+              DBCollection collection = mongoDatabase.getCollection(customerName);
 
-            document.put("Game Name", bootFile);
-            document.put("Timeslot", currentTimeslot);
-            document.put("Max_Usage", maxUsage);
-            document.put("Min_Usage", minUsage);
-            document.put("Avg_Usage", avgUsage);
-            document.put("Tariff", tariff);
-            document.put("Usage Per Population", usage);
+              DBObject document = new BasicDBObject();
 
-            collection.insert(document);
+              document.put("Game Name", bootFile);
+              document.put("Timeslot", currentTimeslot);
+              document.put("Max_Usage", maxUsage);
+              document.put("Min_Usage", minUsage);
+              document.put("Avg_Usage", avgUsage);
+              document.put("Tariff", tariff);
+              document.put("Usage Per Population", usage);
+
+              collection.insert(document);
+            }
         }
       }
       catch(Exception e)
       {
-      }*/
-    }
-
-    // public synchronized void handleMessage(SimEnd se)
-    // {
-    //   int timeslot = timeslotRepo.currentTimeslot().getSerialNumber();
-
-    //   Double wholesaleMarketCost = wholesaleMarketInformation.getCumulativeWholesaleMarketCostMap();
-    //   Double avgMarketOrderQuantity = wholesaleMarketInformation.getAvgWholesaleMarketOrderMap();
-
-    //   try
-    //   {
-    //     FileWriter fw = new FileWriter("GameInfo_Baseline.txt", true);
-    //     fw.write("Broker : " + brokerContext.getBrokerUsername() + " :: Last Timeslot : " + timeslot + " :: WholesaleMarketCost : " + wholesaleMarketCost + " :: AvgMarketOrderQuantity : " + (avgMarketOrderQuantity/(timeslot-360)) + "\n");
-    //     fw.close();
-    //   }
-    //   catch(Exception e)
-    //   {
-    //     e.printStackTrace();
-    //   }
-    // }
+      } */
+    } 
 
     @Override // from Activatable
     public synchronized void activate (int timeslotIndex)
     {
-        //System.out.println("MarketPosition at time " + (timeslotIndex-1) + " : " + marketPositionInformation.getMarketPosition(timeslotIndex-1));
-        log.info(" Activate from Message Manager " + timeslotIndex);
+      log.info(" Activate from Message Manager " + timeslotIndex);
+
+      if(timeslotIndex == 360)
+      {
+        for(Map.Entry<Integer, Double> item: netDemand.entrySet())
+        {
+          netDemandRecord.localProduceConsumeNetDemand(item.getValue(), item.getKey());
+        }
+      }
+    }
+
+    // Net Demand Predictor (Sample Broker's way)
+    @Override
+    public Double collectNetDemand(Integer timeslot)
+    {
+      int index = timeslot % brokerContext.getUsageRecordLength();
+      return netDemandRecord.getNetDemand(index);
+    }
+
+    /**
+     * Calculate Capacity Transaction Threshold
+     * @param timeslot
+     * @return
+     */
+    public Double calculateThreshold()
+    {
+      List<Double> listOfNetDemands = getListOfNetDemands();
+
+      Double mean = calculateMean(listOfNetDemands);
+      Double stdev = calculateStdev(listOfNetDemands, mean);
+
+      Double threshold = mean + CAPACITY_TRANSACTION_GAMMA * stdev;
+
+      // System.out.println("Threshold: " + threshold + " :: UpperBound: " + upperBound);
+
+      return threshold;
+    }
+    
+    /**
+     * Calculate Capacity Transaction Threshold
+     * @param timeslot
+     * @return
+     */
+    public Double calculateTolerance(Integer timeslot, double tolerance)
+    {
+      List<Double> listOfNetConsuptions = getListOfNetConsumptions();
+
+      Double mean = calculateMean(listOfNetConsuptions);
+      Double stdev = calculateStdev(listOfNetConsuptions, mean);
+
+      Double threshold = mean + CAPACITY_TRANSACTION_GAMMA * stdev;
+      Double upperBound = mean + tolerance * stdev;
+
+      // System.out.println("Threshold: " + threshold + " :: UpperBound: " + upperBound);
+
+      return upperBound;
+    }
+
+    /**
+     *
+     * @return Calculates avg of a list
+     */
+    public Double calculateMean(List<Double> list)
+    {
+      Double mean = 0.0;
+
+      for(Double item: list)
+        mean += item;
+
+      mean /= list.size();
+
+      return mean;
+    }
+
+    /**
+     *
+     * @return Calculates s.d. of a list
+     */
+    public Double calculateStdev(List<Double> list, Double mean)
+    {
+      Double stdev = 0.0;
+
+      for(Double item: list)
+        stdev += Math.pow((item - mean), 2);
+
+      stdev = Math.sqrt(stdev / list.size());
+
+      return stdev;
+    }
+
+    /**
+     *
+     * @return List of net demands
+     */
+    public List<Double> getListOfNetDemands()
+    {
+      List<Double> listOfNetDemand = netDemand.entrySet().stream().map(x -> x.getValue()).collect(Collectors.toList());
+
+      return listOfNetDemand;
+    }
+
+    /**
+     *
+     * @return List of net consumptions
+     */
+    public List<Double> getListOfNetConsumptions()
+    {
+      Map<Integer, Double> netConsumption = distributionInformation.getTotalConsumption();
+      List<Double> listOfNetConsumption = netConsumption.entrySet().stream().map(x -> x.getValue()).collect(Collectors.toList());
+
+      return listOfNetConsumption;
     }
 
     /**
@@ -932,4 +1100,50 @@ public class MessageManagerService implements MessageManager, Initializable, Act
      {
          return wholesaleMarketInformation;
      }
+
+    class NetDemandRecord
+    {
+      double[] netDemand;
+      double alpha = 0.3;
+
+      /**
+       * Creates an empty record
+       */
+      NetDemandRecord ()
+      {
+        super();
+        this.netDemand = new double[brokerContext.getUsageRecordLength()];
+      }
+
+      private void localProduceConsumeNetDemand (double kwh, int rawIndex)
+      {
+        int index = getIndex(rawIndex);
+        double kwhPerCustomer = kwh;
+
+        double oldUsage = netDemand[index];
+        if (oldUsage == 0.0) {
+          // assume this is the first time
+          netDemand[index] = kwhPerCustomer;
+        }
+        else {
+          // exponential smoothing
+          netDemand[index] = alpha * kwhPerCustomer + (1.0 - alpha) * oldUsage;
+        }
+        //PortfolioManagerService.log.debug("consume {} at {}, customer {}", kwh, index, customer.getName());
+      }
+
+      double getNetDemand (int index)
+      {
+        if (index < 0) {
+          PortfolioManagerService.log.warn("usage requested for negative index " + index);
+          index = 0;
+        }
+        return netDemand[getIndex(index)];
+      }
+
+      private int getIndex (int rawIndex)
+      {
+        return rawIndex % netDemand.length;
+      }
+    }
 }

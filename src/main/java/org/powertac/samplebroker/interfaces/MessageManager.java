@@ -1,10 +1,48 @@
 package org.powertac.samplebroker.interfaces;
 
+import java.util.List;
+
 import org.powertac.samplebroker.information.CustomerUsageInformation;
 import org.powertac.samplebroker.information.WholesaleMarketInformation;
 import org.powertac.samplebroker.messages.*;
 
 public interface MessageManager {
+
+    public Double collectNetDemand(Integer timeslot);
+
+    /**
+     * Calculate Capacity Transaction Threshold
+     * @return
+     */
+    public Double calculateThreshold();
+    
+    /**
+     * Calculate Capacity Transaction Tolerance
+     * @param timeslot
+     * @return
+     */
+    public Double calculateTolerance(Integer timeslot, double tolerance);
+
+    /**
+     * Returns the avg of a list
+     */
+    public Double calculateMean(List<Double> list);
+
+    /**
+     * Returns the s.d. of a list
+     */
+    public Double calculateStdev(List<Double> list, Double mean);
+
+    /**
+     * Returns the list net demands
+     */
+    public List<Double> getListOfNetDemands();
+
+    /**
+     *
+     */
+    public List<Double> getListOfNetConsumptions();
+
     /**
      * Returns game information object
      */

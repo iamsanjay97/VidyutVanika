@@ -1,12 +1,11 @@
 package org.powertac.samplebroker.messages;
 
-import java.lang.reflect.Array;
 import java.util.HashMap;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import org.joda.time.Instant;
 import org.powertac.common.CustomerInfo;
-import java.util.List;
 import org.powertac.common.enumerations.PowerType;
 
 
@@ -365,6 +364,14 @@ public class GameInformation {
      */
     public ArrayList<String> getBrokers() {
         return brokers;
+    }
+
+    /**
+     *
+     * @return
+     */
+    public Integer getNumberOfBroker(){
+        return brokers.size();
     }
 
     /**

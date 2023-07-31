@@ -15,13 +15,12 @@
   <parent>
     <groupId>org.powertac</groupId>
     <artifactId>powertac-parent</artifactId>
-    <version>1.9.0-SNAPSHOT</version>
+    <version>1.7.0</version>
     <relativePath />
   </parent>
 
   <properties>
-    <powertac.version>1.9.0-SNAPSHOT</powertac.version>
-    <maven-shade.version>2.4.3</maven-shade.version>
+    <powertac.version>1.7.0</powertac.version>
     <exec.args></exec.args>
     <syst.args></syst.args>
   </properties>
@@ -44,20 +43,27 @@
       <version>${powertac.version}</version>
     </dependency>
 
-    <!-- http://repo1.maven.org/maven2/com/google/code/gson/gson/2.8.0/gson-2.8.0.jar -->
-    <dependency>
-      <groupId>com.google.code.gson</groupId>
-      <artifactId>gson</artifactId>
-      <version>2.8.0</version>
-    </dependency>
-
     <!-- Testing; these are NOT transitive -->
 
     <dependency>
       <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter-engine</artifactId>
+      <artifactId>junit-jupiter</artifactId>
       <version>${junit.version}</version>
       <scope>test</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-core</artifactId>
+      <version>${mockito.version}</version>
+      <scope>test</scope>
+    </dependency>
+
+    <!-- https://mvnrepository.com/artifact/nz.ac.waikato.cms.weka/weka-stable -->
+    <dependency>
+        <groupId>nz.ac.waikato.cms.weka</groupId>
+        <artifactId>weka-stable</artifactId>
+        <version>3.6.12</version>
     </dependency>
 
     <!-- https://mvnrepository.com/artifact/org.apache.httpcomponents/httpclient -->
@@ -66,13 +72,6 @@
       <artifactId>httpclient</artifactId>
       <version>4.5.4</version>
     </dependency>
-
-    <!-- https://mvnrepository.com/artifact/org.apache.commons/commons-io -->
-   <dependency>
-     <groupId>org.apache.commons</groupId>
-     <artifactId>commons-io</artifactId>
-     <version>1.3.2</version>
-   </dependency>
 
    <!-- https://mvnrepository.com/artifact/org.json/json -->
    <dependency>
@@ -87,83 +86,57 @@
      <artifactId>json-simple</artifactId>
      <version>1.1</version>
    </dependency>
+ 
+   <dependency>
+     <groupId>commons-io</groupId>
+     <artifactId>commons-io</artifactId>
+     <version>2.6</version>
+   </dependency>
+
+   <dependency>
+    <groupId>com.google.guava</groupId>
+    <artifactId>guava</artifactId>
+    <version>29.0-jre</version>
+   </dependency>
+
+   <dependency>
+    <groupId>org.mongodb</groupId>
+    <artifactId>mongo-java-driver</artifactId>
+    <version>3.0.4</version>
+   </dependency>
+
+   <!-- http://repo1.maven.org/maven2/com/google/code/gson/gson/2.8.0/gson-2.8.0.jar -->
+   <dependency>
+    <groupId>com.google.code.gson</groupId>
+    <artifactId>gson</artifactId>
+    <version>2.8.0</version>
+   </dependency>
 
     <dependency>
-      <groupId>org.mockito</groupId>
-      <artifactId>mockito-core</artifactId>
-      <version>${mockito.version}</version>
-      <scope>test</scope>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-controls</artifactId>
+      <version>14</version>
     </dependency>
 
+   <!-- https://mvnrepository.com/artifact/org.apache.commons/commons-collections4 -->
     <dependency>
-      <groupId>org.mongodb</groupId>
-      <artifactId>mongo-java-driver</artifactId>
-      <version>3.0.4</version>
+      <groupId>org.apache.commons</groupId>
+      <artifactId>commons-collections4</artifactId>
+      <version>4.4</version>
     </dependency>
 
+    <!-- https://mvnrepository.com/artifact/org.apache.commons/commons-math3 -->
     <dependency>
-        <groupId>org.openjfx</groupId>
-        <artifactId>javafx-controls</artifactId>
-        <version>14</version>
+      <groupId>org.apache.commons</groupId>
+      <artifactId>commons-math3</artifactId>
+      <version>3.6.1</version>
     </dependency>
 
-    <!-- https://mvnrepository.com/artifact/nz.ac.waikato.cms.weka/weka-stable -->
+    <!-- https://mvnrepository.com/artifact/org.javatuples/javatuples -->
     <dependency>
-        <groupId>nz.ac.waikato.cms.weka</groupId>
-        <artifactId>weka-stable</artifactId>
-        <version>3.6.12</version>
-    </dependency>
-
-    <!-- ActiveMQ -->
-    <dependency>
-      <groupId>org.apache.activemq</groupId>
-      <artifactId>activemq-core</artifactId>
-      <version>5.6.0</version>
-      <exclusions>
-        <exclusion>
-          <artifactId>hadoop-core</artifactId>
-          <groupId>org.apache.hadoop</groupId>
-        </exclusion>
-        <exclusion>
-          <artifactId>fusemq-leveldb</artifactId>
-          <groupId>org.fusesource.fuse-extra</groupId>
-        </exclusion>
-        <exclusion>
-          <artifactId>org.osgi.core</artifactId>
-          <groupId>org.osgi</groupId>
-        </exclusion>
-      </exclusions>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.activemq</groupId>
-      <artifactId>activemq-pool</artifactId>
-      <version>5.6.0</version>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.xbean</groupId>
-      <artifactId>xbean-spring</artifactId>
-      <version>3.6</version>
-    </dependency>
-    <dependency>
-      <groupId>org.slf4j</groupId>
-      <artifactId>slf4j-api</artifactId>
-      <version>1.6.4</version>
-    </dependency>
-    <dependency>
-      <groupId>org.slf4j</groupId>
-      <artifactId>slf4j-simple</artifactId>
-      <version>1.6.4</version>
-    </dependency>
-    <dependency>
-      <groupId>net.sf.jopt-simple</groupId>
-      <artifactId>jopt-simple</artifactId>
-      <version>4.3</version>
-    </dependency>
-    <dependency>
-      <groupId>net.sf.json-lib</groupId>
-      <artifactId>json-lib</artifactId>
-      <version>1.0</version>
-      <classifier>jdk15</classifier>
+      <groupId>org.javatuples</groupId>
+      <artifactId>javatuples</artifactId>
+      <version>1.2</version>
     </dependency>
 
   </dependencies>

@@ -1,35 +1,53 @@
+/*
+ * Copyright (c) 2012-2013 by the original author
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.powertac.samplebroker;
 
-import java.io.File;
 import java.io.FileWriter;
-import java.io.FileReader;
-import java.io.BufferedReader;
-import java.io.IOException;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+
+import org.apache.logging.log4j.Logger;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.Vector;
 import java.util.List;
 import java.util.Map;
 import java.util.SortedMap;
 import java.util.Random;
 
+import org.json.simple.JSONObject;
+import org.json.simple.JSONValue;
 import org.apache.logging.log4j.Logger;
+import org.apache.activemq.command.IntegerResponse;
+import org.apache.activemq.filter.FunctionCallExpression.invalidFunctionExpressionException;
+import org.apache.commons.io.output.ProxyOutputStream;
+import org.apache.commons.pool2.proxy.ProxiedKeyedObjectPool;
 import org.apache.logging.log4j.LogManager;
 import org.joda.time.DateTime;
 import org.joda.time.Instant;
-import org.powertac.common.Broker;
-import org.powertac.common.Competition;
-import org.powertac.common.CustomerInfo;
-import org.powertac.common.Rate;
-import org.powertac.common.RegulationRate;
-import org.powertac.common.RegulationRate.ResponseTime;
-import org.powertac.common.Tariff;
-import org.powertac.common.TariffSpecification;
-import org.powertac.common.TariffTransaction;
-import org.powertac.common.TimeService;
-import org.powertac.common.ClearedTrade;
+import org.powertac.common.*;
 import org.powertac.common.config.ConfigurableValue;
 import org.powertac.common.enumerations.PowerType;
 import org.powertac.common.msg.BalancingControlEvent;
@@ -39,6 +57,7 @@ import org.powertac.common.msg.CustomerBootstrapData;
 import org.powertac.common.msg.EconomicControlEvent;
 import org.powertac.common.msg.TariffRevoke;
 import org.powertac.common.msg.TariffStatus;
+import org.powertac.common.msg.TimeslotComplete;
 import org.powertac.common.msg.SimEnd;
 import org.powertac.common.repo.CustomerRepo;
 import org.powertac.common.repo.TariffRepo;
@@ -48,32 +67,38 @@ import org.powertac.samplebroker.interfaces.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import org.powertac.samplebroker.messages.BalancingMarketInformation;
-import org.powertac.samplebroker.messages.WeatherInformation;
-import org.powertac.samplebroker.util.Helper;
-import org.powertac.samplebroker.util.HelperForJSON;
-import org.powertac.samplebroker.information.UsageRecord;
-import org.powertac.samplebroker.information.CustomerUsageInformation;
-import org.powertac.samplebroker.information.CustomerMigration;
-import org.powertac.samplebroker.information.CustomerMigration.MigrationInfo;
-import org.powertac.samplebroker.information.CustomerAndTariffInformation;
-import org.powertac.samplebroker.information.CustomerSubscriptionInformation;
-import org.powertac.samplebroker.information.WholesaleMarketInformation;
-import org.powertac.samplebroker.messages.ClearedTradeInformation;
-import org.powertac.samplebroker.messages.OrderBookInformation;
-import org.powertac.samplebroker.messages.GameInformation;
-import org.powertac.samplebroker.validation.*;
+import javafx.util.Pair;
 
-import com.mongodb.*;
 import com.mongodb.BasicDBObject;
 import com.mongodb.DB;
 import com.mongodb.DBObject;
 import com.mongodb.DBCollection;
-import com.mongodb.client.MongoDatabase;
 import com.mongodb.MongoClient;
+
+import org.powertac.samplebroker.messages.BalancingMarketInformation;
+import org.powertac.samplebroker.util.Helper;
+import org.powertac.samplebroker.tariffmarket.TariffHeuristics;
+import com.mongodb.client.MongoDatabase;
 import com.mongodb.MongoCredential;
 import com.mongodb.client.MongoCollection;
-import org.bson.Document;
+import org.bson.Document; 
+
+import org.powertac.samplebroker.messages.BalancingMarketInformation;
+import org.powertac.samplebroker.messages.WeatherInformation;
+import org.powertac.samplebroker.util.Helper;
+import org.powertac.samplebroker.util.JSON_API;
+import org.powertac.samplebroker.information.TariffMarketInformation;
+import org.powertac.samplebroker.information.UsageRecord;
+import org.powertac.samplebroker.information.CustomerUsageInformation;
+import org.powertac.samplebroker.information.CustomerSubscriptionInformation;
+import org.powertac.samplebroker.information.WholesaleMarketInformation;
+import org.powertac.samplebroker.messages.ClearedTradeInformation;
+import org.powertac.samplebroker.messages.CapacityTransactionInformation;
+import org.powertac.samplebroker.messages.MarketTransactionInformation;
+import org.powertac.samplebroker.messages.DistributionInformation;
+import org.powertac.samplebroker.messages.OrderBookInformation;
+import org.powertac.samplebroker.messages.CashPositionInformation;
+import org.powertac.samplebroker.messages.GameInformation;
 
 /**
  * Handles portfolio-management responsibilities for the broker. This
@@ -125,8 +150,13 @@ implements PortfolioManager, Initializable, Activatable
   private Map<TariffSpecification, Map<CustomerInfo, CustomerRecord>> customerSubscriptions;
   private Map<PowerType, List<TariffSpecification>> competingTariffs;
   private Map<PowerType, List<TariffSpecification>> ownTariffs;
+  private Map<Integer, Double> predConsumptionMap;
+  private Map<Integer, Double> predProductionMap;
+  private Integer[] predictedPeaksMap;
 
-  private Map<String, LinkedList<Double>> customerSubscriptionPredictionMap;
+  // Keep track of a benchmark price to allow for comparisons between
+  // tariff evaluations
+  private double benchmarkPrice = 0.0;
 
   // These customer records need to be notified on activation
   private List<CustomerRecord> notifyOnActivation = new ArrayList<>();
@@ -143,34 +173,72 @@ implements PortfolioManager, Initializable, Activatable
   @ConfigurableValue(valueType = "Double", description = "Default daily meter charge")
   private double defaultPeriodicPayment = -1.0;
 
-  CustomerUsageInformation custUsageInfo = null;
+  @ConfigurableValue(valueType = "Double", description = "Fixed cost/kWh for distribution")
+  private double distributionCharge = -0.02;
 
-  int[] blocks = {5, 9, 10, 16, 17, 22, 23, 5};
+  @ConfigurableValue(valueType = "Double", description = "Initial production tariff rate")
+  private double prodRate = 0.0136;
+
+  // *********** Beolw are Configurable Parameters for Tariff Heuristic **************
+  
+  @ConfigurableValue(valueType = "Integer", description = "periodic update interval")
+  private Integer UPDATE_INTERVAL = 84;
+
+  @ConfigurableValue(valueType = "Integer", description = "modify update interval after this timeslot")
+  private Integer SECOND_LAG = 1032;         // 360 + 4 weeks (672) = 1032
+
+  @ConfigurableValue(valueType = "Double", description = "Discount rate to compare current tariff revenue with previous tariff")
+  private Double DISCOUNT = 0.9;       
+  
+  @ConfigurableValue(valueType = "Boolean", description = "MongoDB Storage Flag")
+  private Boolean MONGO_FLAG = true;
+
+  // *********** Beolw are Configurable Parameters for Peak Detection ************************************************************/
+
+  @ConfigurableValue(valueType = "Integer", description = "Number of timeslots before the predicted timeslot")
+  private Integer skip = 4;
+
+  @ConfigurableValue(valueType = "Integer", description = "Number of timeslots to jump over between two NDP calls")
+  private Integer jump = 4;
+
+  @ConfigurableValue(valueType = "Double", description = "Exponential Smoothing parameter")
+  private Double alpha = 0.4;
+
+  @ConfigurableValue(valueType = "Double", description = "Resistace that needs to be crossed to classify any timeslot as peak")
+  private Double resistance = 0.80;
+
+  @ConfigurableValue(valueType = "Double", description = "Upper bound of the net demand that needs to be crossed to consider any timeslot as possible peak")
+  private Double tolerance = 1.3;
+
+  // *******************************************************************************
 
   int OFFSET = 24;
 
-  double minforrand=0.0;
-  double maxforrand=1.0;
-  double dfrate=-0.5;
-  private TariffSpecification newTariff, prevTariff;
+  int alphaLength = OFFSET / jump;
 
-  private CustomerMigration customerMigration;
-  private CustomerAndTariffInformation customerAndTariffInformation;
+  int[] blocks = {5, 9, 10, 16, 17, 22, 23, 5};
+
+  double[] alphaList = new double[alphaLength];
+
+  /*********************************************************************************************************************** */
+
+  double dfrate=-0.5;
+  double dfrateProd=-0.5;
+
+  CustomerUsageInformation custUsageInfo = null;
 
   private BalancingMarketInformation balancingMarketInformation;
+  private CashPositionInformation cashPositionInformation;
   private WeatherInformation weatherInformation;
   private WholesaleMarketInformation wholesaleMarketInformation;
   private ClearedTradeInformation clearedTradeInformation;
   private OrderBookInformation orderBookInformation;
   private GameInformation gameInformation;
-
-  private CustomerUsageValidation customerUsageValidation;
-  private MCPValidation mcpValidation;
-  private NetImbalanceValidation netImbalanceValidation;
-
-  private TariffSpecification ownBestConsTariff;
-  private TariffSpecification competitorBestConsTariff;
-  private Integer lastConsTariffPublicationTimeslot;
+  private MarketTransactionInformation marketTransactionInformation;
+  private TariffMarketInformation tariffMarketInformation;
+  private DistributionInformation distributionInformation;
+  private CapacityTransactionInformation capacityTransactionInformation;
+  private TariffHeuristics tariffHeuristics;
 
   //MongoDB client and Database
   MongoClient mongoClient;
@@ -178,14 +246,11 @@ implements PortfolioManager, Initializable, Activatable
   //MongoDB database
   DB mongoDatabase;
 
-  String dbname;
+  String dbname; 
 
-  //Game Name
-  String bootFile;
+  FileWriter accountingInformation;
 
   Random rand;
-
-  Double totalUsage = 0.0;
 
   /**
    * Default constructor.
@@ -207,7 +272,10 @@ implements PortfolioManager, Initializable, Activatable
     customerSubscriptions = new HashMap<>();
     competingTariffs = new HashMap<>();
     ownTariffs = new HashMap<>();
-    notifyOnActivation.clear();
+    predConsumptionMap = new LinkedHashMap<>();
+    predProductionMap = new LinkedHashMap<>();
+    predictedPeaksMap = new Integer[2500];
+    Arrays.fill(predictedPeaksMap, 0);
 
     balancingMarketInformation = messageManager.getBalancingMarketInformation();
     weatherInformation = messageManager.getWeatherInformation();
@@ -215,50 +283,50 @@ implements PortfolioManager, Initializable, Activatable
     clearedTradeInformation = messageManager.getClearTradeInformation();
     orderBookInformation = messageManager.getOrderBookInformation();
     gameInformation = messageManager.getGameInformation();
-
-    customerUsageValidation = new CustomerUsageValidation();
-    mcpValidation = new MCPValidation();
-    netImbalanceValidation = new NetImbalanceValidation();
+    cashPositionInformation = messageManager.getCashPositionInformation();
 
     custUsageInfo = messageManager.getCustomerUsageInformation();
-    newTariff = null;
-    prevTariff = null;
     dfrate=0.0;
+    dfrateProd = 0.0;
 
-    customerSubscriptionPredictionMap = new HashMap<>();
-
-    customerMigration = new CustomerMigration();
-    customerAndTariffInformation = new CustomerAndTariffInformation();
-
-    ownBestConsTariff = null;
-    competitorBestConsTariff = null;
-    lastConsTariffPublicationTimeslot = -1;
+    tariffMarketInformation = new TariffMarketInformation();
 
     rand = new Random();
 
-    /*dbname = "PowerTAC2020_Repository";
+    /********************************************************************************* */
+    // Generate the list for Exponential Smoothing weights 
+    // alpha, alpha*(1-alpha), alpha*(1-alpha)^2, ... (in decreasing order)
+    alphaList[0] = alpha;
+    for(int i = 1; i < alphaLength; i++)
+      alphaList[i] = alphaList[i-1]*(1 - alpha);  
+    /********************************************************************************* */
 
-    try
+    if(MONGO_FLAG)
     {
-      File file = new File("currentBootFile.txt");
-      BufferedReader br = new BufferedReader(new FileReader(file));
+      dbname = "PowerTAC2021_Trials2";
+      try
+      {
+          mongoClient = new MongoClient("localhost", 27017);
+          mongoDatabase = mongoClient.getDB(dbname);
+      }
+      catch(Exception e)
+      {
+          log.warn("Mongo DB connection Exception " + e.toString());
+      }
+      log.info(" Connected to Database " + dbname + " -- Broker Initialize");
+      System.out.println("Connected to Database " + dbname + " from Initialize in PortfolioManager");
+    }
+    else
+    {
+      try
+      {
+          accountingInformation = new FileWriter("AccountingInformationFile.csv", true);
+          // accountingInformation.write("Game, Timeslot, IncomeToCost, MarketShare, TariffRevenue, WholesaleCost, BalancingCost, DistributionCost, Capacity Transaction, CashPosition");
+      }
+      catch(Exception e) {e.printStackTrace();}
+    }
 
-      bootFile = br.readLine() + "_" + Integer.toString(rand.nextInt(1000));
-    }
-    catch(IOException e)
-    {}
-
-    try
-    {
-        mongoClient = new MongoClient("localhost", 27017);
-        mongoDatabase = mongoClient.getDB(dbname);
-    }
-    catch(Exception e)
-    {
-        log.warn("Mongo DB connection Exception " + e.toString());
-    }
-    log.info(" Connected to Database PowerTAC2019 -- Broker Initialize");
-    System.out.println("Connected to Database " + dbname + " from Initialize in PortfolioManagerService");*/
+    notifyOnActivation.clear();
   }
 
   // -------------- data access ------------------
@@ -331,24 +399,61 @@ implements PortfolioManager, Initializable, Activatable
   }
 
   /**
-   * Finds the list of own tariffs for the given PowerType.
+   * Adds a new own tariff to the list.
    */
-  List<TariffSpecification> getOwnTariffs (PowerType powerType)
+  private void addOwnTariff(TariffSpecification spec)
   {
-    List<TariffSpecification> result = ownTariffs.get(powerType);
-    if (result == null) {
-      result = new ArrayList<TariffSpecification>();
-      ownTariffs.put(powerType, result);
-    }
-    return result;
+    List<TariffSpecification> tariffs = ownTariffs.get(spec.getPowerType());
+
+    if(tariffs == null)
+      tariffs = new ArrayList<>();
+
+    tariffs.add(spec);
+    ownTariffs.put(spec.getPowerType(), tariffs);
   }
 
   /**
-   * Adds a new competing tariff to the list.
+   * Removes a old own tariff from the list.
    */
-  private void addOwnTariff (TariffSpecification spec)
+  private void removeOwnTariff(TariffSpecification spec)
   {
-    getOwnTariffs(spec.getPowerType()).add(spec);
+    List<TariffSpecification> tariffs = ownTariffs.get(spec.getPowerType());
+
+    if(tariffs == null)
+      return;
+
+    tariffs.remove(spec);
+    ownTariffs.put(spec.getPowerType(), tariffs);
+  }
+
+  public double[] getHourlyTariff(TariffSpecification specification)
+  {
+    // Generate tariff series
+    List<Rate> rates = specification.getRates();
+
+    double arr[] = new double[24];
+    int flag1 = 0;
+
+    for(Rate rate : rates)
+    {
+      int begin = rate.getDailyBegin();
+      int end = rate.getDailyEnd() + 1;
+
+      if(begin != -1)
+      {
+        flag1 = 1;
+        while(begin != end)
+        {
+          arr[begin] = Math.abs(rate.getMinValue());
+          begin = (begin + 1) % 24;
+        }
+      }
+    }
+
+    if(flag1 == 0)
+      Arrays.fill(arr, Math.abs(rates.get(0).getMinValue()));
+
+    return arr;
   }
 
   /**
@@ -358,609 +463,99 @@ implements PortfolioManager, Initializable, Activatable
   public double collectUsage (int index)
   {
     double result = 0.0;
+
     for (Map<CustomerInfo, CustomerRecord> customerMap : customerSubscriptions.values())
     {
       for (CustomerRecord record : customerMap.values())
       {
-        result += record.getUsage(index);
+        try
+        {
+          double usage = record.getUsage(index);
+          result += usage;
+        }
+        catch(Exception e) {}
       }
     }
     return -result; // convert to needed energy account balance
   }
 
-  // MCP Predictor
-  @Override
-  public double[] MCPPredictorFFN (int currentTimeslot)
+  // Production is very random, focus only on Consumption
+  public double[] predictNetDemandNaive(int currentTimeslot)
   {
-    double result[] = new double[24];
+    double netDemandPred[] = new double[24];
 
-    ArrayList<Double> predictions;
+    Double dailyWeight = 0.50;
+    Double weeklyWeight = 1 - dailyWeight;
 
-    List<Integer> listofBiddingTimeslot = new ArrayList<>();
-    List<Integer> listOfBiddingMonthOfYear = new ArrayList<>();
-    List<Integer> listOfBiddingDayOfWeek = new ArrayList<>();
-    List<Integer> listOfBiddingDayOfMonth = new ArrayList<>();
-    List<Integer> listOfBiddingHourOfDay = new ArrayList<>();
-
-    List<Integer> listofExecutionTimeslot = new ArrayList<>();
-    List<Integer> listOfExecutionMonthOfYear = new ArrayList<>();
-    List<Integer> listOfExecutionDayOfWeek = new ArrayList<>();
-    List<Integer> listOfExecutionDayOfMonth = new ArrayList<>();
-    List<Integer> listOfExecutionHourOfDay = new ArrayList<>();
-
-    List<Double> listOfTemperature = new ArrayList<>();
-    List<Double> listOfCloudCover = new ArrayList<>();
-    List<Double> listOfWindSpeed = new ArrayList<>();
-
-    List<Double> listOfUnclearedAsk = new ArrayList<>();
-    List<Double> listOfUnclearedBid = new ArrayList<>();
-    List<Double> listofMCP = new ArrayList<>();
-
-    List<Double> listOfUnclearedAsk1 = new ArrayList<>();
-    List<Double> listOfUnclearedBid1 = new ArrayList<>();
-    List<Double> listofMCP1 = new ArrayList<>();
-
-    for(int proximity = 1; proximity <= 24; proximity++)
+    for(int index = 24; index >= 1; index--)
     {
-      int futureTimeslot = currentTimeslot + proximity;
-      DateTime currentDate = timeslotRepo.getDateTimeForIndex(currentTimeslot);
-      DateTime futureDate = timeslotRepo.getDateTimeForIndex(futureTimeslot);
+      int prevDayTimeslot = currentTimeslot - index + 1;          // Daily Pattern
+      int prevWeekTimeslot = currentTimeslot - (index + 144) + 1;         // Weekly Pattern
 
-      Integer biddingMonthOfYear = currentDate.getMonthOfYear();
-      Integer biddingDayOfWeek = currentDate.getDayOfWeek();
-      Integer biddingDayOfMonth = currentDate.getDayOfMonth();
-      Integer biddingHourOfDay = currentDate.getHourOfDay();
+      Double totalDayConsumption = distributionInformation.getTotalConsumption(prevDayTimeslot);
+      Double totalDayProduction = distributionInformation.getTotalProduction(prevDayTimeslot);
 
-      Integer executionMonthOfYear = futureDate.getMonthOfYear();
-      Integer executionDayOfWeek = futureDate.getDayOfWeek();
-      Integer executionDayOfMonth = futureDate.getDayOfMonth();
-      Integer executionHourOfDay = futureDate.getHourOfDay();
+      Double totalWeekConsumption = distributionInformation.getTotalConsumption(prevWeekTimeslot);
+      Double totalWeekProduction = distributionInformation.getTotalProduction(prevWeekTimeslot);
 
-      Double temperature = weatherInformation.getWeatherForecast(currentTimeslot-1).getPredictions().get(proximity-1).getTemperature();
-      Double cloudCover = weatherInformation.getWeatherForecast(currentTimeslot-1).getPredictions().get(proximity-1).getCloudCover();
-      Double windSpeed = weatherInformation.getWeatherForecast(currentTimeslot-1).getPredictions().get(proximity-1).getWindSpeed();
+      Double totalConsumption = dailyWeight*totalDayConsumption + weeklyWeight*totalWeekConsumption;
+      Double totalProduction = dailyWeight*totalDayProduction + weeklyWeight*totalWeekProduction;
 
-      Double unclearedAsk = orderBookInformation.getFirstUnclearedAsk(currentTimeslot, proximity);
-      Double unclearedBid = orderBookInformation.getFirstUnclearedBid(currentTimeslot, proximity);
-      Double MCP = clearedTradeInformation.getLastMCPForProximity(currentTimeslot, proximity);
+      predConsumptionMap.put(currentTimeslot+24-index+1, totalConsumption);
+      predProductionMap.put(currentTimeslot+24-index+1, totalProduction);
 
-      Double unclearedAsk1 = orderBookInformation.getFirstUnclearedAskPrev(futureTimeslot, currentTimeslot);
-      Double unclearedBid1 = orderBookInformation.getFirstUnclearedBidPrev(futureTimeslot, currentTimeslot);
-      Double MCP1 = clearedTradeInformation.getLastMCPForProximityPrev(futureTimeslot, currentTimeslot);
-
-      listofBiddingTimeslot.add(currentTimeslot-360);
-      listOfBiddingMonthOfYear.add(biddingMonthOfYear);
-      listOfBiddingDayOfWeek.add(biddingDayOfWeek);
-      listOfBiddingDayOfMonth.add(biddingDayOfMonth);
-      listOfBiddingHourOfDay.add(biddingHourOfDay);
-
-      listofExecutionTimeslot.add(futureTimeslot-362);
-      listOfExecutionMonthOfYear.add(executionMonthOfYear);
-      listOfExecutionDayOfWeek.add(executionDayOfWeek);
-      listOfExecutionDayOfMonth.add(executionDayOfMonth);
-      listOfExecutionHourOfDay.add(executionHourOfDay);
-
-      listOfTemperature.add(temperature);
-      listOfCloudCover.add(cloudCover);
-      listOfWindSpeed.add(windSpeed);
-
-      listOfUnclearedAsk.add(unclearedAsk);
-      listOfUnclearedBid.add(unclearedBid);
-      listofMCP.add(MCP);
-
-      listOfUnclearedAsk1.add(unclearedAsk);
-      listOfUnclearedBid1.add(unclearedBid);
-      listofMCP1.add(MCP);
+      // netDemandPred[24-index] = totalConsumption - totalProduction;
+      netDemandPred[24-index] = totalConsumption;
     }
 
-    try
-    {
-      predictions = HelperForJSON.communicateMCP("http://localhost:5000/MCPPredictionFFN",
-                                      listofBiddingTimeslot, listOfBiddingMonthOfYear, listOfBiddingDayOfWeek, listOfBiddingDayOfMonth, listOfBiddingHourOfDay,
-                                      listofExecutionTimeslot, listOfExecutionMonthOfYear, listOfExecutionDayOfWeek, listOfExecutionDayOfMonth, listOfExecutionHourOfDay,
-                                      listOfTemperature, listOfCloudCover, listOfWindSpeed, listOfUnclearedAsk, listOfUnclearedBid, listofMCP, listOfUnclearedAsk1, listOfUnclearedBid1, listofMCP1);
-
-      for(int proximity = 1; proximity <= 24; proximity++)
-      {
-        mcpValidation.updateMCPMap(currentTimeslot, (currentTimeslot+proximity), Math.abs(predictions.get(proximity-1)) ,false);
-        result[proximity-1] = predictions.get(proximity-1);
-      }
-    }
-    catch(Exception e)
-    {
-      System.out.println("\n\nError in Avg MCP Predictor\n\n");
-    }
-
-    return result;
+    return netDemandPred;
   }
 
-  // MCP Predictor
-  @Override
-  public double[] NetImbalancePredictorFFN (int currentTimeslot)
+  public double[] predictNetDemand(int currentTimeslot)
   {
-    double result[] = new double[24];
+    double netDemandPred[] = new double[24];
 
-    ArrayList<Double> predictions;
+    JSONObject[] object = new JSONObject[168];
+    DistributionInformation distributionInformation = messageManager.getDistributionInformation();
 
-    List<Integer> listofBiddingTimeslot = new ArrayList<>();
-    List<Integer> listOfBiddingMonthOfYear = new ArrayList<>();
-    List<Integer> listOfBiddingDayOfWeek = new ArrayList<>();
-    List<Integer> listOfBiddingDayOfMonth = new ArrayList<>();
-    List<Integer> listOfBiddingHourOfDay = new ArrayList<>();
-
-    List<Integer> listofExecutionTimeslot = new ArrayList<>();
-    List<Integer> listOfExecutionMonthOfYear = new ArrayList<>();
-    List<Integer> listOfExecutionDayOfWeek = new ArrayList<>();
-    List<Integer> listOfExecutionDayOfMonth = new ArrayList<>();
-    List<Integer> listOfExecutionHourOfDay = new ArrayList<>();
-
-    List<Integer> listOfNumberOfPlayers = new ArrayList<>();
-
-    Integer numberOfPlayers = gameInformation.getBrokers().size();
-    listOfNumberOfPlayers.add(numberOfPlayers-1);
-
-    List<Double> listOfTemperature = new ArrayList<>();
-    List<Double> listOfCloudCover = new ArrayList<>();
-    List<Double> listOfWindSpeed = new ArrayList<>();
-
-    for(int proximity = 1; proximity <= 24; proximity++)
+    for(int index = 168; index >= 1; index--)
     {
-      int futureTimeslot = currentTimeslot + proximity;
-      DateTime currentDate = timeslotRepo.getDateTimeForIndex(currentTimeslot);
-      DateTime futureDate = timeslotRepo.getDateTimeForIndex(futureTimeslot);
-
-      Integer biddingMonthOfYear = currentDate.getMonthOfYear();
-      Integer biddingDayOfWeek = currentDate.getDayOfWeek();
-      Integer biddingDayOfMonth = currentDate.getDayOfMonth();
-      Integer biddingHourOfDay = currentDate.getHourOfDay();
-
-      Integer executionMonthOfYear = futureDate.getMonthOfYear();
-      Integer executionDayOfWeek = futureDate.getDayOfWeek();
-      Integer executionDayOfMonth = futureDate.getDayOfMonth();
-      Integer executionHourOfDay = futureDate.getHourOfDay();
-
-      Double temperature = weatherInformation.getWeatherForecast(currentTimeslot-1).getPredictions().get(proximity-1).getTemperature();
-      Double cloudCover = weatherInformation.getWeatherForecast(currentTimeslot-1).getPredictions().get(proximity-1).getCloudCover();
-      Double windSpeed = weatherInformation.getWeatherForecast(currentTimeslot-1).getPredictions().get(proximity-1).getWindSpeed();
-
-      listofBiddingTimeslot.add(currentTimeslot-360);
-      listOfBiddingMonthOfYear.add(biddingMonthOfYear);
-      listOfBiddingDayOfWeek.add(biddingDayOfWeek);
-      listOfBiddingDayOfMonth.add(biddingDayOfMonth);
-      listOfBiddingHourOfDay.add(biddingHourOfDay);
-
-      listofExecutionTimeslot.add(futureTimeslot-362);
-      listOfExecutionMonthOfYear.add(executionMonthOfYear);
-      listOfExecutionDayOfWeek.add(executionDayOfWeek);
-      listOfExecutionDayOfMonth.add(executionDayOfMonth);
-      listOfExecutionHourOfDay.add(executionHourOfDay);
-
-      listOfTemperature.add(temperature);
-      listOfCloudCover.add(cloudCover);
-      listOfWindSpeed.add(windSpeed);
-    }
-
-    try
-    {
-      predictions = HelperForJSON.communicateNIP("http://localhost:5000/NetImbalancePredictionFFN",
-                                      listofBiddingTimeslot, listOfBiddingMonthOfYear, listOfBiddingDayOfWeek, listOfBiddingDayOfMonth, listOfBiddingHourOfDay,
-                                      listofExecutionTimeslot, listOfExecutionMonthOfYear, listOfExecutionDayOfWeek, listOfExecutionDayOfMonth, listOfExecutionHourOfDay,
-                                      listOfNumberOfPlayers, listOfTemperature, listOfCloudCover, listOfWindSpeed);
-
-      for(int proximity = 1; proximity <= 24; proximity++)
-      {
-        netImbalanceValidation.updateImbalanceMap((currentTimeslot+proximity), predictions.get(proximity-1),false);
-        result[proximity-1] = predictions.get(proximity-1);
-      }
-    }
-    catch(Exception e)
-    {
-      System.out.println("\n\nError in Avg MCP Predictor\n\n");
-    }
-
-    return result;
-  }
-
-  // Customer Usage Predictor LSTM
-  @Override
-  public double[] collectUsage (int currentTimeslot, boolean flag)
-  {
-    List<String> listOfTargetedConsumers = Helper.getListOfTargetedConsumers();
-    List<String> listOfTargetedProducers = Helper.getListOfTargetedProducers();
-
-    double result[] = new double[24];
-
-    List<Integer> listOfDayOfMonth = new ArrayList<>();
-    List<Integer> listOfDayOfWeek = new ArrayList<>();
-    List<Integer> listOfHourOfDay = new ArrayList<>();
-
-    List<Double> listOfTemperature = new ArrayList<>();
-    List<Double> listOfWindSpeed = new ArrayList<>();
-    List<Double> listOfWindDirection = new ArrayList<>();
-    List<Double> listOfCloudCover = new ArrayList<>();
-
-    List<Integer> listOfFutureDayOfMonth = new ArrayList<>();
-    List<Integer> listOfFutureDayOfWeek = new ArrayList<>();
-    List<Integer> listOfFutureHourOfDay = new ArrayList<>();
-
-    List<Double> listOfForecastedTemperature = new ArrayList<>();
-    List<Double> listOfForecastedCloudCover = new ArrayList<>();
-    List<Double> listOfForecastedWindDirection = new ArrayList<>();
-    List<Double> listOfForecastedWindSpeed = new ArrayList<>();
-
-    for(int proximity = 24; proximity >= 1; proximity--)
-    {
-      int prevTimeslot = currentTimeslot - proximity + 1;
-      DateTime prevDate = timeslotRepo.getDateTimeForIndex(prevTimeslot);
-
-      Integer dayOfMonth = prevDate.getDayOfMonth();
-      Integer dayOfWeek = prevDate.getDayOfWeek();
-      Integer hourOfDay = prevDate.getHourOfDay();
+      int prevTimeslot = currentTimeslot - index + 1;
 
       Double temperature = weatherInformation.getWeatherReport(prevTimeslot).getTemperature();
       Double windSpeed = weatherInformation.getWeatherReport(prevTimeslot).getWindSpeed();
-      Double windDirection = weatherInformation.getWeatherReport(prevTimeslot).getWindDirection();
-      Double cloudCover = weatherInformation.getWeatherReport(prevTimeslot).getCloudCover();
+      Double total_consumption = distributionInformation.getTotalConsumption(prevTimeslot);
+      Double total_production = distributionInformation.getTotalProduction(prevTimeslot);
 
-      listOfDayOfMonth.add(dayOfMonth);
-      listOfDayOfWeek.add(dayOfWeek);
-      listOfHourOfDay.add(hourOfDay);
+      JSONObject obj = new JSONObject();
 
-      listOfTemperature.add(temperature);
-      listOfWindSpeed.add(windSpeed);
-      listOfWindDirection.add(windDirection);
-      listOfCloudCover.add(cloudCover);
+      obj.put("Temperature", temperature);
+      obj.put("Wind_Speed", windSpeed);
+      obj.put("Total_Consumption", total_consumption);
+      obj.put("Total_Production", total_production);
+
+      object[168-index] = obj;
     }
 
-    for(int proximity = 1; proximity <= 24; proximity++)
+    String responseString = JSON_API.communicateWithPython("http://localhost:5000/NDPredictionLSTM", object);
+
+    Object obj = JSONValue.parse(responseString);  
+    JSONObject jsonObject = (JSONObject) obj;  
+
+    String consResponse = (String)jsonObject.get("consumption");
+    String prodResponse = (String)jsonObject.get("production");
+
+    ArrayList<Double> consPredictions = JSON_API.decodeJSON(consResponse);
+    ArrayList<Double> prodPredictions = JSON_API.decodeJSON(prodResponse);
+
+    for(int proximity = 0; proximity < 24; proximity++)
     {
-      int ft = currentTimeslot + proximity;
-      DateTime fd = timeslotRepo.getDateTimeForIndex(ft);
-
-      Integer dayOfMonth = fd.getDayOfMonth();
-      Integer dayOfWeek = fd.getDayOfWeek();
-      Integer hourOfDay = fd.getHourOfDay();
-
-      Double t = weatherInformation.getWeatherForecast(currentTimeslot).getPredictions().get(proximity-1).getTemperature();
-      Double cc = weatherInformation.getWeatherForecast(currentTimeslot).getPredictions().get(proximity-1).getCloudCover();
-      Double ws = weatherInformation.getWeatherForecast(currentTimeslot).getPredictions().get(proximity-1).getWindSpeed();
-      Double wd = weatherInformation.getWeatherForecast(currentTimeslot).getPredictions().get(proximity-1).getWindDirection();
-
-      listOfFutureDayOfMonth.add(dayOfMonth);
-      listOfFutureDayOfWeek.add(dayOfWeek);
-      listOfFutureHourOfDay.add(hourOfDay);
-
-      listOfForecastedTemperature.add(t);
-      listOfForecastedCloudCover.add(cc);
-      listOfForecastedWindDirection.add(ws);
-      listOfForecastedWindSpeed.add(wd);
+      netDemandPred[proximity] = consPredictions.get(proximity) - prodPredictions.get(proximity);
+      predConsumptionMap.put(currentTimeslot+proximity+1, consPredictions.get(proximity));
+      predProductionMap.put(currentTimeslot+proximity+1, prodPredictions.get(proximity));
     }
 
-    for (Map.Entry<TariffSpecification, Map<CustomerInfo, CustomerRecord>> tariffMap : customerSubscriptions.entrySet())
-    {
-      TariffSpecification specification = tariffMap.getKey();
-      Map<CustomerInfo, CustomerRecord> customerMap = tariffMap.getValue();
-
-      try
-      {
-      }
-      catch(Exception e)
-      {
-        e.printStackTrace();
-      }
-
-      try
-      {
-        List<TariffSpecification> candidate = ownTariffs.get(specification.getPowerType());
-
-        if(candidate.contains(specification))
-        {
-          for (CustomerRecord record : customerMap.values())
-          {
-            try
-            {
-              List<Double> listOfAvgUsage = new ArrayList<>();
-              List<Double> listOfMinUsage = new ArrayList<>();
-              List<Double> listOfMaxUsage = new ArrayList<>();
-              List<Double> listOfTariff = new ArrayList<>();
-
-              List<Double> listOfUsagePerPopulation = new ArrayList<>();
-              List<Double> listOfUsagePerPopulation1 = new ArrayList<>();
-
-              String customer = record.getCustomerInfo().getName();
-
-              Double maxUsage = custUsageInfo.getCustomerMaxUsage(customer);
-              Double minUsage = custUsageInfo.getCustomerMinUsage(customer);
-              Double avgUsage = custUsageInfo.getCustomerAvgUsageMap(customer);
-
-              listOfAvgUsage.add(avgUsage);
-              listOfMinUsage.add(minUsage);
-              listOfMaxUsage.add(maxUsage);
-
-              Integer totalPopulation = gameInformation.getPopulation(customer);
-
-              int subscribedPopulation = record.subscribedPopulation;
-
-              if(listOfTargetedProducers.contains(customer))
-              {
-                Double[] allUsage= custUsageInfo.getCustomerUsageMap(customer);
-
-                for (int i = 23; i >= 0; i--)
-                {
-                  if(allUsage[currentTimeslot - i] != -1.0)
-                  {
-                      listOfUsagePerPopulation.add(allUsage[currentTimeslot - i]);
-                  }
-                  else
-                  {
-                    int index = (currentTimeslot - i) % brokerContext.getUsageRecordLength();
-                    double pred = Math.abs(record.getUsage(index)); // subscribedPopulation;            // Sign is different in both the CUP Methods, so minus sign instead of plus
-                    listOfUsagePerPopulation.add(pred);
-                  }
-                }
-
-                for (int i = 191; i >= 168; i--)
-                {
-                  if(allUsage[currentTimeslot - i] != -1.0)
-                  {
-                      listOfUsagePerPopulation1.add(allUsage[currentTimeslot - i]);
-                  }
-                  else
-                  {
-                    int index = (currentTimeslot - i) % brokerContext.getUsageRecordLength();
-                    double pred = Math.abs(record.getUsage(index)); // subscribedPopulation;            // Sign is different in both the CUP Methods, so minus sign instead of plus
-                    listOfUsagePerPopulation1.add(pred);
-                  }
-                }
-
-                List<Rate> rates = specification.getRates();
-
-                double arr[] = new double[24];
-                int flag1 = 0;
-
-                for(Rate rate : rates)
-                {
-                  int begin = rate.getDailyBegin();
-                  int end = rate.getDailyEnd() + 1;
-
-                  if(begin != -1)
-                  {
-                    flag1 = 1;
-                    while(begin != end)
-                    {
-                      arr[begin] = Math.abs(rate.getMinValue());
-                      begin = (begin + 1) % 24;
-                    }
-                  }
-                }
-
-                if(flag1 == 0)
-                  Arrays.fill(arr, Math.abs(rates.get(0).getMinValue()));
-
-                for(int proximity = 1; proximity <= 24; proximity++)
-                {
-                  int futureTimeslot = currentTimeslot + proximity;
-                  DateTime futureDate = timeslotRepo.getDateTimeForIndex(futureTimeslot);
-
-                  Integer hourOfDay = futureDate.getHourOfDay();
-
-                  listOfTariff.add(arr[hourOfDay]);
-                }
-
-                ArrayList<Double> predictions = HelperForJSON.communicateCUP("http://localhost:5000/CUPredictionFFN", customer,
-                                                                              listOfDayOfMonth, listOfDayOfWeek, listOfHourOfDay, listOfTemperature, listOfWindSpeed,
-                                                                              listOfWindDirection, listOfCloudCover, listOfAvgUsage, listOfMinUsage, listOfMaxUsage,
-                                                                              listOfTariff, listOfUsagePerPopulation, listOfUsagePerPopulation1);
-
-                //LinkedList<Double> subscriptions = customerSubscriptionPredictionMap.get(customer);  // Update this map every timeslot
-
-                if(customer.equals("WindmillCoOp-1") || customer.equals("WindmillCoOp-2"))
-                {
-                  for(int proximity = 1; proximity <= 24; proximity++)
-                  {
-                    //double projectedUsage = predictions.get(proximity-1) * subscriptions.get(proximity-1) * totalPopulation;
-                    double projectedUsage = predictions.get(proximity-1) * totalPopulation;
-                    customerUsageValidation.updateCustomerUsageMap(customer, (currentTimeslot+proximity), Math.abs(projectedUsage) ,false);
-                    result[proximity - 1] -= projectedUsage;
-                  }
-                }
-                else
-                {
-                  for(int proximity = 1; proximity <= 24; proximity++)
-                  {
-                    int futureTimeslot = currentTimeslot + proximity;
-                    DateTime fd = timeslotRepo.getDateTimeForIndex(futureTimeslot);
-
-                    Integer hourOfDay = fd.getHourOfDay();
-
-                    double projectedUsage = 0.0D;
-
-                    if(hourOfDay >= 6 && hourOfDay < 18)
-                    {
-                      //projectedUsage = predictions.get(proximity-1) * subscriptions.get(proximity-1) * totalPopulation;
-                      projectedUsage = predictions.get(proximity-1) * totalPopulation;
-                    }
-
-                    customerUsageValidation.updateCustomerUsageMap(customer, (currentTimeslot+proximity), Math.abs(projectedUsage) ,false);
-                    result[proximity - 1] -= projectedUsage;
-                  }
-                }
-              }
-              else if(listOfTargetedConsumers.contains(customer)) // && subscribedPopulation != 0)
-              {
-                listOfUsagePerPopulation = new ArrayList<>();
-                listOfTariff = new ArrayList<>();
-
-                Double[] allUsage= custUsageInfo.getCustomerUsageMap(customer);
-
-                for (int i = 191; i >= 0; i--)
-                {
-                  if(allUsage[currentTimeslot - i] != -1.0)
-                  {
-                      listOfUsagePerPopulation.add(allUsage[currentTimeslot - i]);
-                  }
-                  else
-                  {
-                    int index = (currentTimeslot - i) % brokerContext.getUsageRecordLength();
-                    double pred = -record.getUsage(index); // subscribedPopulation;            // Sign is different in both the CUP Methods, so minus sign instead of plus
-                    listOfUsagePerPopulation.add(pred);
-                  }
-                }
-
-                List<Rate> rates = specification.getRates();
-
-                double arr[] = new double[24];
-                int flag1 = 0;
-
-                for(Rate rate : rates)
-                {
-                  int begin = rate.getDailyBegin();
-                  int end = rate.getDailyEnd() + 1;
-
-                  if(begin != -1)
-                  {
-                    flag1 = 1;
-                    while(begin != end)
-                    {
-                      arr[begin] = Math.abs(rate.getMinValue());
-                      begin = (begin + 1) % 24;
-                    }
-                  }
-                }
-
-                if(flag1 == 0)
-                  Arrays.fill(arr, Math.abs(rates.get(0).getMinValue()));
-
-                for(int proximity = 24; proximity >= 1; proximity--)
-                {
-                  int prevTimeslot = currentTimeslot - proximity + 1;
-                  DateTime preDate = timeslotRepo.getDateTimeForIndex(prevTimeslot);
-
-                  Integer hourOfDay = preDate.getHourOfDay();
-
-                  listOfTariff.add(arr[hourOfDay]);
-                }
-
-                ArrayList<Double> predictions = HelperForJSON.communicateCUP("http://localhost:5000/CUPredictionLSTM", customer,
-                                                                              listOfDayOfMonth, listOfDayOfWeek, listOfHourOfDay, listOfTemperature, listOfWindSpeed,
-                                                                              listOfWindDirection, listOfCloudCover, listOfAvgUsage, listOfMinUsage, listOfMaxUsage,
-                                                                              listOfTariff, listOfUsagePerPopulation, null);
-
-                LinkedList<Double> subscriptions = customerSubscriptionPredictionMap.get(customer);  // Update this map every timeslot
-
-                for(int proximity = 1; proximity <= 24; proximity++)
-                {
-                  double projectedUsage = predictions.get(proximity-1) * subscriptions.get(proximity-1) * totalPopulation;
-
-                  //if(customer.equals("CentervilleHomes") && (proximity == 1))
-                  //{
-                  //  System.out.println("Count : " + (subscriptions.get(proximity-1) * totalPopulation) + " :: Predicted Usage : " + projectedUsage);
-                  //}
-
-                  customerUsageValidation.updateCustomerUsageMap(customer, (currentTimeslot+proximity), Math.abs(projectedUsage) ,false);
-                  result[proximity - 1] += projectedUsage;
-                }
-              }
-              else
-              {
-                //Sample Broker's CUP
-                for(int proximity = 1; proximity <= 24; proximity++)
-                {
-                  int executionTimeslot = currentTimeslot + proximity;
-                  int index = (executionTimeslot) % brokerContext.getUsageRecordLength();
-
-                  double pred = -record.getUsage(index);
-                  result[proximity - 1] += pred;         // Sign is different in both the CUP Methods, so minus sign instead of plus
-                }
-              }
-            }
-            catch(Exception e)
-            {
-              //Sample Broker's CUP
-              for(int proximity = 1; proximity <= 24; proximity++)
-              {
-                int executionTimeslot = currentTimeslot + proximity;
-                int index = (executionTimeslot) % brokerContext.getUsageRecordLength();
-
-                double pred = -record.getUsage(index);
-                result[proximity - 1] += pred;         // Sign is different in both the CUP Methods, so minus sign instead of plus
-              }
-            }
-          }
-        }
-      }
-      catch(Exception e)
-      {
-        e.printStackTrace();
-      }
-    }
-
-    for(int proximity = 1; proximity <= 24; proximity++)
-    {
-      //if(proximity == 1)
-      //  System.out.println("Predicted Net Usage : " + result[proximity-1]);
-
-      customerUsageValidation.updateNetUsageMap((currentTimeslot+proximity) , result[proximity-1], false);
-    }
-
-    return result;
-  }
-
-  // Customer Migration Predictor FFN
-  public void CMPredictionFFN (int currentTimeslot)        // Not for Producers
-  {
-    Map<String, Integer> mapOfCustomers = gameInformation.getCustomerInfo();
-    List<String> listOfTargetedConsumers = Helper.getListOfTargetedConsumers();
-
-    List<Double> listOfCompareToBestTariffs = new ArrayList<>();
-
-    double ownBestTariff = -Double.MAX_VALUE;
-    double competitorBestTariff = -Double.MAX_VALUE;
-
-    for(TariffSpecification spec1 : ownTariffs.get(PowerType.CONSUMPTION))
-    {
-      ownBestTariff = Math.max(Helper.evaluateCost(spec1), ownBestTariff);
-    }
-
-    for(TariffSpecification spec1 : competingTariffs.get(PowerType.CONSUMPTION))
-    {
-      competitorBestTariff = Math.max(Helper.evaluateCost(spec1), competitorBestTariff);
-    }
-
-    listOfCompareToBestTariffs.add((ownBestTariff - competitorBestTariff));
-
-    for(Map.Entry<String, Integer> map : mapOfCustomers.entrySet())
-    {
-      String customer = map.getKey();
-      Integer population = map.getValue();
-
-      if(listOfTargetedConsumers.contains(customer))
-      {
-        ArrayList<Double> predictions = HelperForJSON.communicateCM("http://localhost:5000/CMPredictionFFN", customer, listOfCompareToBestTariffs);
-
-        LinkedList<Double> predictedSubscriptions = new LinkedList<>();
-
-        for(Double item : predictions)
-        {
-          for(int i = 0; i < 6; i++)
-          {
-            predictedSubscriptions.addLast(item);
-          }
-        }
-        customerSubscriptionPredictionMap.put(customer, predictedSubscriptions);
-      }
-    }
-  }
-
-  public void updateCustomerSubscriptionPredictionMap()
-  {
-    for(Map.Entry<String, LinkedList<Double>> subscriptions : customerSubscriptionPredictionMap.entrySet())
-    {
-      Double last = subscriptions.getValue().getLast();
-
-      subscriptions.getValue().pollFirst();
-      subscriptions.getValue().addLast(last);
-    }
+    return netDemandPred;
   }
 
   // -------------- Message handlers -------------------
@@ -987,20 +582,6 @@ implements PortfolioManager, Initializable, Activatable
      record.subscribedPopulation = subs;
    }
 
-   public synchronized void handleMessage(BalanceReport br)
-   {
-       int timeslot = br.getTimeslotIndex();
-       netImbalanceValidation.updateImbalanceMap(timeslot, br.getNetImbalance(),true);
-   }
-
-   public synchronized void handleMessage(ClearedTrade ct)
-   {
-       Integer messageTimeslot = timeslotRepo.getTimeslotIndex(ct.getDateExecuted());
-       Integer executionTimeslot = ct.getTimeslotIndex();
-
-       mcpValidation.updateMCPMap((messageTimeslot-1), executionTimeslot, Math.abs(ct.getExecutionPrice()) ,true);
-   }
-
   /**
    * Handles a TariffSpecification. These are sent by the server when new tariffs are
    * published. If it's not ours, then it's a competitor's tariff. We keep track of
@@ -1008,11 +589,15 @@ implements PortfolioManager, Initializable, Activatable
    */
   public synchronized void handleMessage (TariffSpecification spec)
   {
-    //System.out.println("Broker : " + spec.getBroker().getUsername() + " :: Spec : " + spec.getRates());
+    System.out.println("Broker : " + spec.getBroker().getUsername() + " :: Spec : " + spec.getPowerType() + " :: " + spec.getRates());
 
     if((spec.getBroker().getUsername().equals("default broker")) && (spec.getPowerType()==PowerType.CONSUMPTION))
     {
         dfrate=spec.getRates().get(0).getValue();
+    }
+    if((spec.getBroker().getUsername().equals("default broker")) && (spec.getPowerType()==PowerType.PRODUCTION))
+    {
+        dfrateProd=spec.getRates().get(0).getValue();
     }
 
     Broker theBroker = spec.getBroker();
@@ -1035,12 +620,6 @@ implements PortfolioManager, Initializable, Activatable
       addCompetingTariff(spec);
       tariffRepo.addSpecification(spec);
     }
-
-    //if(spec.getPowerType() == PowerType.CONSUMPTION)
-    //{
-    //  System.out.println("Calling Migrations");
-    //  CMPredictionFFN(currentTimeslot);
-    //}
   }
 
   /**
@@ -1058,12 +637,11 @@ implements PortfolioManager, Initializable, Activatable
    */
    public synchronized void handleMessage(TariffTransaction ttx)
    {
+    //  if(ttx.getCustomerInfo().getName().equals("CentervilleHomes"))
+    //   System.out.println("Charge: " + (ttx.getCharge()/ttx.getKWh()));
+
      int currentTimeslot = timeslotRepo.currentTimeslot().getSerialNumber();
-
-     List<String> listOfTargetedConsumers = Helper.getListOfTargetedConsumers();
-     List<String> listOfTargetedProducers = Helper.getListOfTargetedProducers();
-
-     totalUsage += ttx.getKWh();
+     tariffMarketInformation.updateBrokerTariffRepo(currentTimeslot, ttx.getTariffSpec(), ttx.getCharge(), ttx.getKWh());
 
      if((TariffTransaction.Type.CONSUME == ttx.getTxType()) || (TariffTransaction.Type.PRODUCE == ttx.getTxType()))
      {
@@ -1080,11 +658,6 @@ implements PortfolioManager, Initializable, Activatable
        hour = timeslotRepo.findBySerialNumber(timeslot).getStartInstant().toDateTime().getHourOfDay();
        day = timeslotRepo.findBySerialNumber(timeslot).getStartInstant().toDateTime().getDayOfWeek();
        int blockNumber = Helper.getBlockNumber(hour, blocks);
-
-       if(listOfTargetedConsumers.contains(customerName) || listOfTargetedProducers.contains(customerName))
-       {
-         customerUsageValidation.updateCustomerUsageMap(customerName, currentTimeslot, Math.abs(ttx.getKWh()) ,true);
-       }
 
        if(ttx.getKWh() != 0.0) {
          usagePerPopulation = Math.abs(ttx.getKWh() / subscribedPopulation);
@@ -1104,11 +677,6 @@ implements PortfolioManager, Initializable, Activatable
        custUsageInfo.setCustomerUsageMap(customerName, ttx.getPostedTimeslotIndex(), usagePerPopulation);
      }
 
-     //if(ttx.getCustomerInfo().getName().equals("CentervilleHomes") && (TariffTransaction.Type.CONSUME == ttx.getTxType()))
-     //{
-     //  System.out.println("Customers : " + ttx.getCustomerCount() + " :: Usage : " + ttx.getKWh() + " :: Population : " + ttx.getCustomerCount());
-     //}
-
      // make sure we have this tariff
 
      TariffSpecification newSpec = ttx.getTariffSpec();
@@ -1123,7 +691,6 @@ implements PortfolioManager, Initializable, Activatable
      }
      TariffTransaction.Type txType = ttx.getTxType();
      CustomerRecord record = getCustomerRecordByTariff(ttx.getTariffSpec(), ttx.getCustomerInfo());
-
 
      if (TariffTransaction.Type.SIGNUP == txType) {
        // keep track of customer counts
@@ -1170,15 +737,6 @@ implements PortfolioManager, Initializable, Activatable
     Broker source = tr.getBroker();
     log.info("Revoke tariff " + tr.getTariffId() + " from " + tr.getBroker().getUsername());
 
-    TariffSpecification old = tariffRepo.findSpecificationById(tr.getTariffId());
-
-    List<TariffSpecification> candidates1 = ownTariffs.get(old.getPowerType());
-    if (null == candidates1) {
-      log.warn("Candidate list is null");
-      return;
-    }
-    candidates1.remove(old);
-
     // if it's from some other broker, we need to remove it from the
     // tariffRepo, and from the competingTariffs list
     if (!(source.getUsername().equals(brokerContext.getBrokerUsername()))) {
@@ -1198,138 +756,467 @@ implements PortfolioManager, Initializable, Activatable
     }
   }
 
-  /*public synchronized void handleMessage(SimEnd se)
+  public synchronized void handleMessage (SimEnd se)
   {
-    int timeslot = timeslotRepo.currentTimeslot().getSerialNumber();
-
-    try
-    {
-      FileWriter fw = new FileWriter("SimEndCounter.txt", true);
-      fw.write(bootFile + " :: " + timeslot + "\n");
-      fw.close();
-    }
-    catch(Exception e)
-    {}
-
-    try
-    {
-      customerUsageValidation.printToFile(bootFile, gameInformation.getBrokers());
-    }
-    catch(Exception e){}
-
-    try
-    {
-      mcpValidation.printToFile(bootFile, gameInformation.getBrokers());
-    }
-    catch(Exception e){}
-
-    try
-    {
-      netImbalanceValidation.printToFile(bootFile, gameInformation.getBrokers());
-    }
-    catch(Exception e){}
-
-    try
-    {
-      balancingMarketInformation.printToFile(bootFile, gameInformation.getBrokers());
-    }
-    catch(Exception e){}
-
-    for(Map.Entry<String, SortedMap<Integer, MigrationInfo>> customers : customerMigration.getCustomerMigrationMap().entrySet())
+    if(!MONGO_FLAG)
     {
       try
       {
-        String col = customers.getKey() + "_Migration_Info";
-        DBCollection collection = mongoDatabase.getCollection(col);
-
-        SortedMap<Integer, MigrationInfo> CMM = customers.getValue();
-
-        for(SortedMap.Entry<Integer, MigrationInfo> item : CMM.entrySet())
-        {
-          DBObject document = new BasicDBObject();
-
-          document.put("Game_Name", bootFile);
-          document.put("Timeslot", item.getKey());
-          document.put("Compare_To_Best_Tariff", item.getValue().compareToBest);
-          document.put("Migrations", item.getValue().getMigrations());
-          document.put("Population", item.getValue().getPopulation());
-          document.put("Label", item.getValue().label);
-
-          collection.insert(document);
-        }
+          accountingInformation.close();
       }
-      catch(Exception e)
-      {}
+      catch(Exception e) {}
     }
-  }*/
+  }
 
-
-  // --------------- activation -----------------
-  /**
-   * Called after TimeslotComplete msg received. Note that activation order
-   * among modules is non-deterministic.
-   */
   @Override // from Activatable
   public synchronized void activate (int timeslotIndex)
   {
-    if(timeslotIndex >= 362)
+    if(timeslotIndex != 360)
+      updateCurrentTariffStats(timeslotIndex);
+
+    /**
+     * Heuristic Based Tariff Strategy
+     */
+    if (customerSubscriptions.size() == 0)       // The first tariff from our broker
     {
-      //customerUsageValidation.updateNetUsageMap(timeslotIndex , totalUsage, true);   // define totalUsage
-      //System.out.println("Actual Net Usage : " + totalUsage);
-      //double predictedMCP[] = MCPPredictorFFN(timeslotIndex);
-      //double predictedNetImbalance[] = NetImbalancePredictorFFN(timeslotIndex);
-    }
-
-    totalUsage = 0.0;
-
-    if (customerSubscriptions.size() == 0) {
-      // we (most likely) have no tariffs
+      tariffHeuristics = new TariffHeuristics(this.brokerContext, gameInformation.getNumberOfBroker());
       createInitialTariffs();
-    }
-    else {
-      // we have some, are they good enough?
-      improveTariffs();
+    }      
+    else if((timeslotIndex-360) % UPDATE_INTERVAL == 0)
+    {
+      improveTariffs(timeslotIndex);
     }
 
-    //if(timeslotIndex >= 361)
-    //{
-    //  try
-    //  {
-    //    updateCustomerSubscriptionPredictionMap();      // Updating Customer Subscription Predictions
-    //  }
-    //  catch(Exception e)
-    //  {}
-    //}
+    if((timeslotIndex != 360) && ((timeslotIndex-360) % 48 == 0))
+        updateProductionTariff();
+
+    updateMarketShare(timeslotIndex);       // Update broker's market share (volume)
+
+    if(timeslotIndex != 360)
+      storetoMongoDB(timeslotIndex);
+
+    if(timeslotIndex%4 == 0) 
+    {
+      double[] predictions = predictNetDemandNaive(timeslotIndex);
+      detectPeaks(timeslotIndex, predictions);
+    }
+
+    updatePeakPredictedInMongoDB(timeslotIndex);
+
+    // Gap of skip-1 timeslots, after which that timeslot prediction freezes
+    if(predictedPeaksMap[timeslotIndex+skip-1] == 1)
+      publishECEvent(timeslotIndex+skip-1);
 
     for (CustomerRecord record: notifyOnActivation)
       record.activate();
   }
 
+  public void updateCurrentTariffStats(Integer timeslot)
+  {
+    marketTransactionInformation = messageManager.getMarketTransactionInformation();
+    distributionInformation = messageManager.getDistributionInformation();
+
+    TariffSpecification currentSpec = tariffHeuristics.getCurrentTariff();
+
+    double tariffRevenue = tariffMarketInformation.getTariffRevenue(timeslot, currentSpec);
+    double wholesaleCost = marketTransactionInformation.getBrokerWholesaleCost(timeslot);
+
+    double brokerNetDemand = Math.abs(tariffMarketInformation.getTariffUsage(timeslot));
+    double netDemand = Math.abs(distributionInformation.getTotalConsumption(timeslot) - distributionInformation.getTotalProduction(timeslot));
+    double percBrokerDemand = brokerNetDemand / netDemand;
+
+    System.out.println("\nTariff Revenue: " + tariffRevenue + " :: Wholesale Cost: " + wholesaleCost + " :: Broker Net Demand: " + brokerNetDemand + " :: Net Demand: " + netDemand);
+
+    tariffHeuristics.updateTariffStats(tariffRevenue, wholesaleCost, netDemand, percBrokerDemand);
+
+    double threshold = messageManager.calculateThreshold();
+    Double tariffOverallRevenue = tariffHeuristics.getTariffRevenuePerTimeslot(threshold, false);
+    System.out.println("\nCurrent Tariff Index:" + tariffHeuristics.getCurrentTariffIndex());
+  }
+
+  private void createInitialTariffs ()
+  {
+    TariffSpecification spec = tariffHeuristics.getInitialTariff();
+
+    addOwnTariff(spec);
+    customerSubscriptions.put(spec, new LinkedHashMap<>());
+    tariffRepo.addSpecification(spec);
+    brokerContext.sendMessage(spec);
+
+    // Production Tariff similar to EWIIS 
+    TariffSpecification prodSpec = new TariffSpecification(brokerContext.getBroker(), PowerType.PRODUCTION);
+    Rate prodRates = new Rate().withValue(prodRate);
+    prodSpec.addRate(prodRates);
+
+    addOwnTariff(prodSpec);
+    customerSubscriptions.put(prodSpec, new LinkedHashMap<>());
+    tariffRepo.addSpecification(prodSpec);
+    brokerContext.sendMessage(prodSpec);
+
+    // BatteryStorage Tariff similar to Crocodile and EWIIS 
+    TariffSpecification storSpec = new TariffSpecification(brokerContext.getBroker(), PowerType.BATTERY_STORAGE)
+    .withMinDuration(302400000).withSignupPayment(10.1).withEarlyWithdrawPayment(-19);
+    Rate storRates = new Rate().withValue(-0.1391);
+    RegulationRate storRR = new RegulationRate().withUpRegulationPayment(0.25).withDownRegulationPayment(-0.0643);
+    storSpec.addRate(storRates);
+    storSpec.addRate(storRR);
+
+    addOwnTariff(storSpec);
+    customerSubscriptions.put(storSpec, new LinkedHashMap<>());
+    tariffRepo.addSpecification(storSpec);
+    brokerContext.sendMessage(storSpec);
+  }
+
+  private void improveTariffs(Integer timeslot)
+  {
+    TariffSpecification oldc = null;
+    List<TariffSpecification> candidates = ownTariffs.get(PowerType.CONSUMPTION);
+
+    if (null == candidates || 0 == candidates.size())
+      log.error("No tariffs found for broker");
+    else 
+    {
+      oldc = candidates.get(0);
+
+      if (null == oldc) 
+      {
+        log.warn("No CONSUMPTION tariffs found");
+      }
+      else 
+      {
+        double threshold = messageManager.calculateThreshold();
+        Double tariffOverallRevenue = tariffHeuristics.getTariffRevenuePerTimeslot(threshold, true);     // Pass 'true' if we are changing the tariff to save the revenue of the existing tariff
+        Double curTariffOverallRevenue = tariffHeuristics.getAvgTariffRevenuePerTimeslotOfCurrentTariff();
+        Double prevTariffOverallRevenue = tariffHeuristics.getAvgTariffRevenuePerTimeslotOfPrevTariff();
+
+        TariffSpecification spec;
+
+        // Condition check to decide new tariff
+        if(timeslot == (360 + UPDATE_INTERVAL))   // the very first update
+        {
+          if(curTariffOverallRevenue > 1500.0)
+            spec = tariffHeuristics.getNextTariff();
+          else
+            spec = tariffHeuristics.getPrevTariff();
+        }
+        else if(timeslot >= SECOND_LAG)           // stop exploration and publish best tariff
+        {
+          spec = tariffHeuristics.getTheBestTariff();
+
+          if(spec == null)               // Current tariff is the best tariff, don't change anything
+            return;
+
+          // if(timeslot == SECOND_LAG)
+          //   UPDATE_INTERVAL *= 2;
+        }
+        else if((curTariffOverallRevenue > 0.0) && (prevTariffOverallRevenue != 0.0 || curTariffOverallRevenue > 3500.0) && (curTariffOverallRevenue > (DISCOUNT*prevTariffOverallRevenue)))
+        {
+          spec = tariffHeuristics.getNextTariff();
+
+          if(spec == null)               // Current tariff is the best (costliest) available, don't change anything
+            return;
+        }
+        else
+        {
+          spec = tariffHeuristics.getPrevTariff();
+        }
+
+        addOwnTariff(spec);
+        customerSubscriptions.put(spec, new LinkedHashMap<>());
+        tariffRepo.addSpecification(spec);
+        brokerContext.sendMessage(spec);
+
+        // revoke the old one
+        removeOwnTariff(oldc);
+        TariffRevoke revoke = new TariffRevoke(brokerContext.getBroker(), oldc);
+        tariffRepo.removeSpecification(revoke.getId());
+        brokerContext.sendMessage(revoke);
+      }
+    }
+  }
+
+  public void updateProductionTariff()
+  {
+    // Update PRODUCTION Tariff
+    wholesaleMarketInformation = messageManager.getWholesaleMarketInformation();
+
+    List<TariffSpecification> opponents1 = getCompetingTariffs(PowerType.PRODUCTION);
+    List<TariffSpecification> opponents2 = getCompetingTariffs(PowerType.WIND_PRODUCTION);
+    List<TariffSpecification> opponents3 = getCompetingTariffs(PowerType.SOLAR_PRODUCTION);
+
+    // double meanMarketPrice = wholesaleMarketInformation.getMeanMarketPrice() / 1000.0;   // to convert to per KWh
+    double meanMarketPrice = 0.035;
+
+    double highest = 0.0;
+
+    for(TariffSpecification item: opponents1)
+    {
+      if(item.getRates().get(0).isFixed())
+        highest = Math.max(highest, item.getRates().get(0).getValue());
+    }
+
+    for(TariffSpecification item: opponents2)
+    {
+      if(item.getRates().get(0).isFixed())
+        highest = Math.max(highest, item.getRates().get(0).getValue());
+    }
+
+    for(TariffSpecification item: opponents3)
+    {
+      if(item.getRates().get(0).isFixed())
+        highest = Math.max(highest, item.getRates().get(0).getValue());
+    }
+
+    if((highest > prodRate) && (highest < meanMarketPrice))
+      prodRate = highest + 0.0005;
+    else if((highest > prodRate) && (highest > meanMarketPrice))
+      prodRate = meanMarketPrice*0.7;
+    else 
+      return;
+
+    TariffSpecification prodSpec = new TariffSpecification(brokerContext.getBroker(), PowerType.PRODUCTION);
+    Rate prodRates = new Rate().withValue(prodRate);
+    prodSpec.addRate(prodRates);
+
+    addOwnTariff(prodSpec);
+    customerSubscriptions.put(prodSpec, new LinkedHashMap<>());
+    tariffRepo.addSpecification(prodSpec);
+    brokerContext.sendMessage(prodSpec);
+  }
+  
+  public void updateMarketShare(Integer timeslot)
+  {
+    distributionInformation = messageManager.getDistributionInformation();
+
+    Pair<Double, Double> item = tariffMarketInformation.getConsProdTariffUsage(timeslot);
+    Double brokerNetUsageC = Math.abs(item.getKey());
+    Double brokerNetUsageP = Math.abs(item.getValue());
+
+    Double marketShareC = -1.0;
+    Double marketShareP = -1.0;
+
+    if(distributionInformation.getTotalConsumption(timeslot) != 0.0)
+      marketShareC = Math.min(1.0, Math.abs(brokerNetUsageC / distributionInformation.getTotalConsumption(timeslot)));
+
+    if(distributionInformation.getTotalProduction(timeslot) != 0.0)
+      marketShareP = Math.min(1.0, Math.abs(brokerNetUsageP / distributionInformation.getTotalProduction(timeslot)));
+
+    tariffMarketInformation.setMarketShareVolumeMapC(timeslot, marketShareC);
+    tariffMarketInformation.setMarketShareVolumeMapP(timeslot, marketShareP);
+  }
+
+  public void storetoMongoDB(Integer timeslot)
+  {
+    balancingMarketInformation = messageManager.getBalancingMarketInformation();
+    marketTransactionInformation = messageManager.getMarketTransactionInformation();
+    distributionInformation = messageManager.getDistributionInformation();
+    cashPositionInformation = messageManager.getCashPositionInformation();
+    gameInformation = messageManager.getGameInformation();
+    capacityTransactionInformation = messageManager.getCapacityTransactionInformation();
+
+    /*
+    PROBLEM: With STORAGE tariffs, accounting numbers do not match
+             Without STORAGE tariff, all numbers match exactly   (NEED TO BE SOLVED)
+    */
+
+    Double tariffRevenue = tariffMarketInformation.getTariffRevenue(timeslot);
+
+    Double wholesaleCost = marketTransactionInformation.getBrokerWholesaleCost(timeslot);
+    Double capacityTransactionPenalty = capacityTransactionInformation.getCapacityTransactionCharge(timeslot);
+
+    Double balancingCost = 0.0;
+    Double distributionCost = 0.0;
+
+    try
+    {
+      distributionCost = distributionInformation.getDistributionTransaction(timeslot).getValue();
+      balancingCost = balancingMarketInformation.getBalancingTransaction(timeslot).getValue();
+    }
+    catch(Exception e){}
+
+    Double cashBalance = cashPositionInformation.getCashPosition(timeslot);
+    Double bankInterest = cashPositionInformation.getBankInterest(timeslot);
+
+    Double profit = tariffRevenue + wholesaleCost + balancingCost + distributionCost + capacityTransactionPenalty + bankInterest;
+
+    Double incomeToCostRatio = -1.0;
+
+    if(wholesaleCost != 0.0)
+        incomeToCostRatio = Math.abs(tariffRevenue/ wholesaleCost);
+
+    Double marketShareC = tariffMarketInformation.getMarketShareVolumeMapC(timeslot);
+    Double marketShareP = tariffMarketInformation.getMarketShareVolumeMapP(timeslot);
+
+    try
+    {
+      if(MONGO_FLAG)
+      {
+        String col1 = "AccountingInformation_VV20";
+        DBCollection collection1 = mongoDatabase.getCollection(col1);
+
+        DBObject document1 = new BasicDBObject();
+
+        document1.put("Game_Name", gameInformation.getName());
+        document1.put("Timeslot", timeslot);
+        document1.put("Income_to_Cost_Ratio", incomeToCostRatio);
+        document1.put("Market_ShareC", marketShareC);
+        document1.put("Market_ShareP", marketShareP);
+        document1.put("Tariff_Revenue", tariffRevenue);
+        document1.put("Wholesale_Cost", wholesaleCost);
+        document1.put("Balancing_Cost", balancingCost);
+        document1.put("Distribution_Cost", distributionCost);
+        document1.put("Capacity_Transaction", capacityTransactionPenalty);
+        document1.put("Profit", profit);
+        document1.put("Cash_Position", cashBalance);
+
+        collection1.insert(document1);
+      }
+      else
+      {
+        String out = gameInformation.getName() + ", " + timeslot + ", " + incomeToCostRatio + ", " + marketShareC + ", " + marketShareP + ", " + tariffRevenue + ", " + 
+                     wholesaleCost + ", " + balancingCost + ", " + distributionCost + ", " + capacityTransactionPenalty + ", " + profit + ", " + cashBalance + "\n";
+        // System.out.println(out);
+        accountingInformation.write(out);
+      }
+    }
+    catch(Exception e){e.printStackTrace();}
+  }
+
+  // Capacity Transaction Peak Prediction
+  public void detectPeaks(Integer timeslot, double[] predictions)
+  {
+    distributionInformation = messageManager.getDistributionInformation();
+    capacityTransactionInformation = messageManager.getCapacityTransactionInformation();
+
+    /**
+     * upperBound should be higher than threshold of capacity transaction (to reduce false positives, may still miss true positives)
+     * setting tolerance (1.5) higher than gamma (1.22) would achieve that  
+     */
+    Double upperBound = messageManager.calculateTolerance(timeslot, tolerance);
+
+    /**
+     * starting from proximity = 3 (skipping 0,1 & 2), to give customers enough time (they need atleast 3 timeslots)
+     * to react to any broker's action, which means we are not using latest 3 predictions for a given timeslot
+     */
+    for(int proximity = (skip-1); proximity < 24; proximity++)
+    {
+      Integer futureTimeslot = timeslot + proximity + 1;
+      double predNetDemand = predictions[proximity];
+      // System.out.println("Future Timeslot: " + futureTimeslot + " :: Prediction: " + predNetDemand + " :: Before: " + capacityTransactionInformation.getCapacityTransactionPrediction(futureTimeslot));
+
+      if(predNetDemand > upperBound)
+      {
+        Double weight = alphaList[((proximity + 1) / jump) - 1];
+        capacityTransactionInformation.setCapacityTransactionPrediction(futureTimeslot, weight);
+      }
+      // System.out.println("Future Timeslot: " + futureTimeslot + " :: Before: " + capacityTransactionInformation.getCapacityTransactionPrediction(futureTimeslot));
+    }
+  }
+
+  public void updatePeakPredictedInMongoDB(Integer timeslot)
+  {
+    /** 
+     * To Detect Peaks 
+     * If capacityTransactionInformation.getCapacityTransactionPrediction(timeslot+4) > resistance, then classify it as a peak
+     * and take appropriate action to mitigate capacity transaction penalty.
+     * Also peaks occur in group, so classify +1/-1 timeslots as peaks as well.
+     */
+    if(capacityTransactionInformation.getCapacityTransactionPrediction(timeslot+skip) > resistance)
+    {
+      predictedPeaksMap[timeslot+skip-1] = 1;
+      predictedPeaksMap[timeslot+skip] = 1;
+      predictedPeaksMap[timeslot+skip+1] = 1;
+    }
+
+    try
+    {
+      String col = "Predicted_Peaks";
+      DBCollection collection = mongoDatabase.getCollection(col);
+
+      DBObject document = new BasicDBObject();
+
+      document.put("Game_Name", gameInformation.getName());
+      document.put("Timeslot", timeslot+skip-1);          // Gap of skip-1 timeslots, after which that timeslot prediction freezes, so safe to write to mongodb
+      document.put("Prediction", predictedPeaksMap[timeslot+skip-1]);
+      document.put("Weight", capacityTransactionInformation.getCapacityTransactionPrediction(timeslot+skip-1));
+
+      collection.insert(document);
+    }
+    catch(Exception e){e.printStackTrace();}
+
+    try
+    {
+      String col = "Predicted_demands";
+      DBCollection collection = mongoDatabase.getCollection(col);
+
+      DBObject document = new BasicDBObject();
+
+      document.put("Game_Name", gameInformation.getName());
+      document.put("Timeslot", timeslot);
+
+      if(predConsumptionMap.get(timeslot) != null)
+        document.put("Predicted Consumption", predConsumptionMap.get(timeslot));
+      else
+        document.put("Predicted Consumption", -1);
+      
+      if(predProductionMap.get(timeslot) != null)
+        document.put("Predicted Production", predProductionMap.get(timeslot));
+      else
+        document.put("Predicted Production", -1);
+
+      collection.insert(document);
+    }
+    catch(Exception e){e.printStackTrace();}
+  }
+
+  public void publishECEvent(Integer timeslot)
+  {
+    // List<TariffSpecification> candidates = tariffRepo.findTariffSpecificationsByPowerType(PowerType.INTERRUPTIBLE_CONSUMPTION);
+    // for (TariffSpecification spec: candidates) 
+    // {
+    //   EconomicControlEvent ece = new EconomicControlEvent(spec, 0.25, timeslot);
+    //   brokerContext.sendMessage(ece);
+    // }
+
+    // Use storage customers to supply energy during peaks, threfore reducing capacity transaction
+    List<TariffSpecification> candidateStorage = tariffRepo.findTariffSpecificationsByPowerType(PowerType.BATTERY_STORAGE);
+    for (TariffSpecification spec: candidateStorage) 
+    {
+      EconomicControlEvent ece = new EconomicControlEvent(spec, 1.25, timeslot);
+      brokerContext.sendMessage(ece);
+    }
+  }
+
   // Creates initial tariffs for the main power types. These are simple
   // fixed-rate two-part tariffs that give the broker a fixed margin.
-  private void createInitialTariffs ()
+  /* private void createInitialTariffsOrg ()
   {
     // remember that market prices are per mwh, but tariffs are by kwh
     double marketPrice = marketManager.getMeanMarketPrice() / 1000.0;
     // for each power type representing a customer population,
     // create a tariff that's better than what's available
     for (PowerType pt : customerProfiles.keySet()) {
+      if(!pt.isStorage()){
       // we'll just do fixed-rate tariffs for now
-      double rateValue = ((marketPrice + fixedPerKwh) * (1.0 + defaultMargin));
+      benchmarkPrice = ((marketPrice + fixedPerKwh) * (1.0 + defaultMargin));
+      double rateValue = benchmarkPrice;
       double periodicValue = defaultPeriodicPayment;
       if (pt.isProduction()) {
         rateValue = -2.0 * marketPrice;
         periodicValue /= 2.0;
       }
       if (pt.isStorage()) {
-        periodicValue = 0.0;
+       rateValue *= 0.9; // Magic number
+       periodicValue = 0.0;
       }
       if (pt.isInterruptible()) {
         rateValue *= 0.7; // Magic number!! price break for interruptible
       }
       //log.info("rateValue = {} for pt {}", rateValue, pt);
       log.info("Tariff {}: rate={}, periodic={}", pt, rateValue, periodicValue);
-      TariffSpecification spec = new TariffSpecification(brokerContext.getBroker(), pt).withPeriodicPayment(periodicValue);
+      TariffSpecification spec =
+          new TariffSpecification(brokerContext.getBroker(), pt)
+              .withPeriodicPayment(periodicValue);
       Rate rate = new Rate().withValue(rateValue);
       if (pt.isInterruptible() && !pt.isStorage()) {
         // set max curtailment
@@ -1338,90 +1225,16 @@ implements PortfolioManager, Initializable, Activatable
       if (pt.isStorage()) {
         // add a RegulationRate
         RegulationRate rr = new RegulationRate();
-        rr.withUpRegulationPayment(-rateValue * 1.2)
-            .withDownRegulationPayment(rateValue * 0.4); // magic numbers
+        rr.withUpRegulationPayment(-rateValue * 1.45)
+            .withDownRegulationPayment(rateValue * 0.5); // magic numbers
         spec.addRate(rr);
       }
-
       spec.addRate(rate);
-
-      addOwnTariff(spec);
-
-      customerSubscriptions.put(spec, new HashMap<>());
+      customerSubscriptions.put(spec, new LinkedHashMap<>());
       tariffRepo.addSpecification(spec);
       brokerContext.sendMessage(spec);
-    }
-  }
-
-  // Checks to see whether our tariffs need fine-tuning
-  private void improveTariffs()
-  {
-    // quick magic-number hack to inject a balancing order
-    int timeslotIndex = timeslotRepo.currentTimeslot().getSerialNumber();
-    if (371 == timeslotIndex) {
-      for (TariffSpecification spec : tariffRepo.findTariffSpecificationsByBroker(brokerContext.getBroker())) {
-        if (PowerType.INTERRUPTIBLE_CONSUMPTION == spec.getPowerType()) {
-          BalancingOrder order = new BalancingOrder(brokerContext.getBroker(), spec, 0.5, spec.getRates().get(0).getMinValue() * 0.9);
-          brokerContext.sendMessage(order);
-        }
-      }
-      // add a battery storage tariff with overpriced regulation
-      // should get no subscriptions...
-      TariffSpecification spec = new TariffSpecification(brokerContext.getBroker(), PowerType.BATTERY_STORAGE);
-      Rate rate = new Rate().withValue(-0.2);
-      spec.addRate(rate);
-      RegulationRate rr = new RegulationRate();
-      rr.withUpRegulationPayment(10.0).withDownRegulationPayment(-10.0); // magic numbers
-      spec.addRate(rr);
-      tariffRepo.addSpecification(spec);
-      brokerContext.sendMessage(spec);
-    }
-    // magic-number hack to supersede a tariff
-    if (380 == timeslotIndex) {
-      // find the existing CONSUMPTION tariff
-      TariffSpecification oldc = null;
-      List<TariffSpecification> candidates = tariffRepo.findTariffSpecificationsByBroker(brokerContext.getBroker());
-      if (null == candidates || 0 == candidates.size())
-        log.error("No tariffs found for broker");
-      else {
-        // oldc = candidates.get(0);
-        for (TariffSpecification candidate: candidates) {
-          if (candidate.getPowerType() == PowerType.CONSUMPTION) {
-            oldc = candidate;
-            break;
-          }
-        }
-        if (null == oldc) {
-          log.warn("No CONSUMPTION tariffs found");
-        }
-        else {
-          double rateValue = oldc.getRates().get(0).getValue();
-          // create a new CONSUMPTION tariff
-          TariffSpecification spec = new TariffSpecification(brokerContext.getBroker(), PowerType.CONSUMPTION).withPeriodicPayment(defaultPeriodicPayment * 1.1);
-          Rate rate = new Rate().withValue(rateValue);
-          spec.addRate(rate);
-          if (null != oldc)
-            spec.addSupersedes(oldc.getId());
-          //mungId(spec, 6);
-          tariffRepo.addSpecification(spec);
-          brokerContext.sendMessage(spec);
-          // revoke the old one
-          TariffRevoke revoke = new TariffRevoke(brokerContext.getBroker(), oldc);
-          brokerContext.sendMessage(revoke);
-
-          addOwnTariff(spec);
-        }
-      }
-    }
-    // Exercise economic controls every 4 timeslots
-    if ((timeslotIndex % 4) == 3) {
-      List<TariffSpecification> candidates = tariffRepo.findTariffSpecificationsByPowerType(PowerType.INTERRUPTIBLE_CONSUMPTION);
-      for (TariffSpecification spec: candidates) {
-        EconomicControlEvent ece = new EconomicControlEvent(spec, 0.2, timeslotIndex + 1);
-        brokerContext.sendMessage(ece);
-      }
-    }
-  }
+    }}
+  } */
 
   // ------------- test-support methods ----------------
   double getUsageForCustomer (CustomerInfo customer,

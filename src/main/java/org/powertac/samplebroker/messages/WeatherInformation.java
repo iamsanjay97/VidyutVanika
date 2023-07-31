@@ -49,12 +49,12 @@ public class WeatherInformation {
 
       for (Map.Entry<Integer, WeatherForecast> entry : forecastedWeather.entrySet())
       {
-        str += "Message Timeslot : " + entry.getKey() + ", Total Consumption " + entry.getValue() + "\n";
+        str += "Message Timeslot : " + entry.getKey() + ", Forecasted Weather " + entry.getValue() + "\n";
       }
 
       for (Map.Entry<Integer, WeatherReport> entry : actualWeather.entrySet())
       {
-        str += "Message Timeslot : " + entry.getKey() + ", Total Production " + entry.getValue() + "\n";
+        str += "Message Timeslot : " + entry.getKey() + ", Actual Weather " + entry.getValue() + "\n";
       }
 
       return str;

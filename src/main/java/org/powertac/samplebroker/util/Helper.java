@@ -4,9 +4,7 @@ import java.util.*;
 
 import org.powertac.common.Rate;
 import org.powertac.common.TariffSpecification;
-import org.powertac.common.WeatherReport;
 import org.powertac.common.enumerations.PowerType;
-import org.powertac.samplebroker.information.UsageRecord;
 import org.powertac.samplebroker.interfaces.BrokerContext;
 import org.powertac.common.Tariff;
 
@@ -28,6 +26,14 @@ public class Helper {
     public static List<String> getListOfTargetedProducers()
     {
       String[] customers = new String[] {"WindmillCoOp-1", "WindmillCoOp-2", "MedicalCenter-2", "SolarLeasing", "SunnyhillSolar1", "SunnyhillSolar2"};
+
+      return Arrays.asList(customers);
+    }
+
+    public static List<String> getListOfTargetedCustomers()
+    {
+      String[] customers = new String[] {"BrooksideHomes", "CentervilleHomes", "DowntownOffices", "EastsideOffices", "FrostyStorage", "HextraChemical",
+                           "MedicalCenter-1", "WindmillCoOp-1", "WindmillCoOp-2", "SolarLeasing"};
 
       return Arrays.asList(customers);
     }

@@ -1,7 +1,5 @@
 package org.powertac.samplebroker.messages;
 
-import javafx.util.Pair;
-
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -33,7 +31,10 @@ public class CashPositionInformation
 
     public Double getBankInterest(Integer timeslot)
     {
+      if(bankInterest.get(timeslot) != null)
         return bankInterest.get(timeslot);
+      else 
+        return 0.0;
     }
 
     /**

@@ -6,31 +6,33 @@ import javafx.util.Pair;
 
 public class WholesaleMarketInformation
 {
-  private Map<Integer, Pair<Integer, Double>> avgMCPMap;
+  private Map<Integer, Pair<Double, Double>> avgMCPMap;
   private Map<Integer, Double> totalClearedQuantityMap;
-  private Map<Integer, Double> wholesaleMarketCostMap;
-  private Map<Integer, Double> wholesaleMarketOrderMap;
+  private Double totalValue = 0.0;
+  private Double totalUsage = 0.0;
+  private Double defaultMCP = 40.0;
 
   public WholesaleMarketInformation()
   {
     avgMCPMap = new HashMap<>();
     totalClearedQuantityMap = new HashMap<>();
-    wholesaleMarketCostMap = new HashMap<>();
-  wholesaleMarketOrderMap = new HashMap<>();
   }
 
-  public void setAvgMCP(Integer timeslot, Double MCP)
+  public void setAvgMCP(Integer timeslot, Double MCP, Double clearedQuantity)
   {
     if(avgMCPMap.get(timeslot) == null)
-      avgMCPMap.put(timeslot, new Pair<Integer, Double>(0, 0.0));
+      avgMCPMap.put(timeslot, new Pair<Double, Double>(0.0, 0.0));
 
-    Double avgMCP = (avgMCPMap.get(timeslot).getValue() * avgMCPMap.get(timeslot).getKey() + MCP) / (avgMCPMap.get(timeslot).getKey() + 1);
-    avgMCPMap.put(timeslot, new Pair<Integer, Double> (avgMCPMap.get(timeslot).getKey() + 1, avgMCP));
+    Double avgMCP = ((avgMCPMap.get(timeslot).getValue() * avgMCPMap.get(timeslot).getKey()) + (MCP * clearedQuantity)) / (avgMCPMap.get(timeslot).getKey() + clearedQuantity);
+    avgMCPMap.put(timeslot, new Pair<Double, Double> (avgMCPMap.get(timeslot).getKey() + clearedQuantity, avgMCP));
   }
 
   public Double getAvgMCP(Integer timeslot)
   {
-    return avgMCPMap.get(timeslot).getValue();
+    if( avgMCPMap.get(timeslot) != null)
+      return avgMCPMap.get(timeslot).getValue();
+    else
+      return defaultMCP;
   }
 
   public void setTotalClearedQuantity(Integer timeslot, Double clearedQuantity)
@@ -45,55 +47,23 @@ public class WholesaleMarketInformation
 
   public Double getTotalClearedQuantity(Integer timeslot)
   {
-    return totalClearedQuantityMap.get(timeslot);
+    if(totalClearedQuantityMap.get(timeslot) != null)
+      return totalClearedQuantityMap.get(timeslot);
+    else
+      return 0.0;
   }
 
-  public void setWholesaleMarketCostMap(Integer timeslot, Double cost)
+  public void setMeanMarketPrice(Double MCP, Double quantity)
   {
-    Double prevCost = wholesaleMarketCostMap.get(timeslot);
-
-    if(prevCost == null)
-      prevCost = 0.0;
-
-    wholesaleMarketCostMap.put(timeslot, prevCost + cost);
+    totalUsage += quantity;
+    totalValue += MCP * quantity;
   }
 
-  public Double getWholesaleMarketCostMap(Integer timeslot)
+  public Double getMeanMarketPrice()
   {
-    return wholesaleMarketCostMap.get(timeslot);
-  }
-
-  public Double getCumulativeWholesaleMarketCostMap()
-  {
-    double cumulativeCost = 0.0;
-
-    for(Double cost : wholesaleMarketCostMap.values())
-    {
-      cumulativeCost += cost;
-    }
-
-    return cumulativeCost;
-  }
-
-  public void setWholesaleMarketOrderMap(Integer timeslot, Double quantity)
-  {
-    wholesaleMarketOrderMap.put(timeslot, quantity);
-  }
-
-  public Double getWholesaleMarketOrderMap(Integer timeslot)
-  {
-    return wholesaleMarketOrderMap.get(timeslot);
-  }
-
-  public Double getAvgWholesaleMarketOrderMap()
-  {
-    double avgQuantity = 0.0;
-
-    for(Double qua : wholesaleMarketOrderMap.values())
-    {
-      avgQuantity += qua;
-    }
-
-    return avgQuantity;
+    if(totalUsage != 0.0)
+      return Math.abs(totalValue/totalUsage);
+    else
+      return defaultMCP;
   }
 }

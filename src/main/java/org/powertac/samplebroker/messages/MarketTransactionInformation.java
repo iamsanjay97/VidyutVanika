@@ -8,11 +8,13 @@ public class MarketTransactionInformation
 {
     private Map<Integer, Map<Integer, Pair<Double, Double>>> marketTransactionInformationbyMessageTimeslot;
     private Map<Integer, Map<Integer, Pair<Double, Double>>> marketTransactionInformationbyExectionTimeslot;
+    private Map<Integer, Double> brokerWholesaleCostMap;
 
     public MarketTransactionInformation()
     {
         marketTransactionInformationbyMessageTimeslot = new HashMap<>();
         marketTransactionInformationbyExectionTimeslot = new HashMap<>();
+        brokerWholesaleCostMap = new HashMap<>();
     }
 
     public void setMarketTransactionInformationbyMessageTimeslot(Integer messageTime, Integer executionTime, Double price, Double quantity)
@@ -71,6 +73,24 @@ public class MarketTransactionInformation
     public Map<Integer, Map<Integer, Pair<Double, Double>>> getMarketTransactionInformationbyExectionTimeslot()
     {
         return marketTransactionInformationbyExectionTimeslot;
+    }
+
+    public void setBrokerWholesaleCostMap(Integer timeslot, Double price, Double quantity) 
+    {
+      if(brokerWholesaleCostMap.get(timeslot) == null)  
+        brokerWholesaleCostMap.put(timeslot, 0.0);
+
+      Double cost = (price * quantity) + brokerWholesaleCostMap.get(timeslot);
+
+      brokerWholesaleCostMap.put(timeslot, cost);
+    }
+
+    public Double getBrokerWholesaleCost(Integer timeslot)
+    {
+      if(brokerWholesaleCostMap.get(timeslot) != null)
+        return brokerWholesaleCostMap.get(timeslot);
+      else
+        return 0.0;
     }
 
     /**
